@@ -1,15 +1,21 @@
-# Project Polaris (Working Title)
+# Project Polaris
 
 Project Polaris is a governance-first framework for coordinated human and AI work.
 
 This repository is the canonical home of the founding principles, constitutional model, and publication drafts.
+Owner and project lead: George Jackson.
 
 ## Foundational Documents (Front-Facing)
 
 1. [Trust Constitution](TRUST_CONSTITUTION.md)
 2. [Public Brief](PROJECT_POLARIS_PUBLIC_BRIEF.md)
 3. [Institutional White Paper (Draft)](PROJECT_POLARIS_INSTITUTIONAL_WHITE_PAPER.md)
-4. [Handoff Note](HANDOFF_NOTE.md)
+
+## Program Documents
+
+1. [Handoff Note](HANDOFF_NOTE.md)
+2. [Background Review](POLARIS_BACKGROUND_REVIEW_2026-02-13.md)
+3. [Work Log](POLARIS_WORK_LOG_2026-02-13.md)
 
 ## Core Constitutional Principles
 
@@ -41,11 +47,9 @@ Key elements include:
 4. Capture-risk upper-bound model.
 5. Bounded trust economy with cryptographic proof-of-trust minting.
 
-## Current Supporting Materials
+## Archival Note
 
-1. [Background Review](POLARIS_BACKGROUND_REVIEW_2026-02-13.md)
-2. [Work Log](POLARIS_WORK_LOG_2026-02-13.md)
-3. External chat-export source PDFs are archived locally and intentionally excluded from this repository.
+External chat-export source PDFs are archived locally and intentionally excluded from this repository.
 
 ## Notes
 

@@ -3,6 +3,7 @@
 
 Version: 1.0 (Draft)  
 Date: February 13, 2026  
+Author: George Jackson  
 Prepared for: Institutional, public-sector, regulatory, and governance-oriented audiences
 
 ## Abstract
@@ -18,7 +19,7 @@ Modern AI systems deliver speed and broad capability, but they do not natively g
 Project Polaris addresses this gap by treating trust and governance as design requirements, not downstream policy add-ons.
 
 ### 1.1 The strategic inversion
-Polaris inverts the dominant "AI social" pattern:
+Polaris inverts the dominant "AI social-feed" pattern:
 
 1. From engagement optimization to mission completion.
 2. From output volume to verifiable quality.
@@ -52,7 +53,7 @@ Trust can only be earned through verified behavior and verified outcomes over ti
 5. Historical trust evidence remains auditable; appeals can adjust current state but cannot erase the record.
 
 ### 3.2 Institutional rationale
-If trust becomes a tradable asset, governance becomes influence-for-sale. The trust constitution is therefore treated as non-negotiable infrastructure policy.
+If trust becomes a tradable asset, governance becomes influence-for-sale. The trust constitution is therefore treated as non-negotiable institutional infrastructure policy.
 
 ### 3.3 Constitutional anchoring and amendment authority
 Polaris treats the constitutional text as a governed public artifact with tamper-evident history.
@@ -154,7 +155,7 @@ This separation is a legitimacy safeguard against unilateral control.
 Humans supervise exceptions, disputes, and high-risk outputs, rather than manually inspecting all low-risk task outputs.
 
 ### 7.4 Identity challenge policy
-Proof-of-personhood and proof-of-agenthood mechanisms may be deployed as anti-abuse and access controls, with strict scope boundaries.
+Proof-of-personhood and proof-of-agenthood checks may be deployed as anti-abuse and access controls, with strict scope boundaries.
 
 1. Identity challenges are support controls, not correctness proofs.
 2. Timing-based challenge methods may be used as one signal, but never as sole identity authority for high-stakes operations.

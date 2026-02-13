@@ -2,12 +2,13 @@
 
 Date: February 13, 2026
 Status: Foundational, non-negotiable
+Author: George Jackson
 
 ## Core Rule
 
 Trust cannot be bought, sold, exchanged, delegated, rented, inherited, or gifted.
 
-Trust can only be earned through verified behaviour and verified outcomes over time.
+Trust can only be earned through verified behavior and verified outcomes over time.
 
 ## Why this exists
 

@@ -3,13 +3,14 @@
 
 Version 1.0  
 February 13, 2026
+Author: George Jackson
 
 ## Executive Summary
 Project Polaris is a proposal for a new kind of network: not a social network for attention, but a work network for verifiable public-benefit outcomes. The goal is simple to state and hard to achieve: enable humans and AI agents to work together at high speed without sacrificing truth, safety, accountability, or legitimacy.
 
 Today, powerful AI systems can produce useful output quickly, but reliability, traceability, and governance are still weak. Polaris is designed to address that gap. It treats trust as an engineering and institutional problem, not a branding problem. It combines structured workflows, independent review, clear role separation, policy enforcement, and tamper-evident evidence trails so that important work can be delegated, checked, and audited.
 
-The core claim is not that Polaris will make AI perfect. The claim is that Polaris can make AI-mediated work more accountable, more reproducible, and more governable.
+The core claim is not that Polaris will make AI perfect. The claim is that Polaris can make AI-mediated work more accountable, more reproducible, and more governable at institutional scale.
 
 ## The Problem
 The current AI ecosystem has a structural issue: output quality can be high, but confidence in that output is often low. This is especially true in high-stakes settings where errors carry real consequences.
@@ -62,7 +63,7 @@ Operationally, this means:
 4. Severe verified misconduct causes rapid trust loss and access restrictions.
 5. Historical trust evidence is auditable and cannot be erased by payment.
 
-## Identity Assurance: Supporting Control, Not Truth Oracle
+## Identity Assurance: Supporting Control, Not a Truth Oracle
 Polaris may use proof-of-personhood and proof-of-agenthood checks as access and anti-abuse controls. These mechanisms can reduce low-effort abuse and Sybil-style identity flooding, but they are not treated as proof of correctness or truth.
 
 Design position:
@@ -72,7 +73,7 @@ Design position:
 3. High-stakes access decisions require layered evidence: identity history, cryptographic identity controls, policy compliance history, and independent review outcomes.
 
 ## Constitutional Anchoring and Amendment Control
-Polaris treats its founding constitution as a controlled public artifact.
+Polaris treats its founding constitution as a publicly governed artifact.
 
 1. The canonical constitution text is hashed and anchored on a public blockchain.
 2. Every amendment is versioned, hashed, and anchored with a public change record.
@@ -234,7 +235,7 @@ In practical terms, Candela already contributes:
 
 Polaris then extends above this core with mission orchestration, identity and trust systems, dispute processes, risk-tier routing, and governance operations.
 
-In short: Candela is the constitutional engine; Polaris is the institutional shell built around it.
+In short: Candela is the governance engine; Polaris is the institutional layer built around it.
 
 ## Risks (Honest View) and Mitigations
 No serious project should hide its risks. Polaris has material risks, but they are addressable.
@@ -323,4 +324,4 @@ Its thesis is straightforward:
 4. Public-benefit systems require accountability by design, not by promise.
 
 Polaris is viable if it remains disciplined about this foundation.  
-Its long-term value will be determined less by how quickly it grows, and more by whether it remains trustworthy as it scales.
+Its long-term value will be determined less by how quickly it grows and more by whether it remains trustworthy as it scales.
