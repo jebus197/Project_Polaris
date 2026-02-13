@@ -237,6 +237,34 @@ Polaris uses bounded earned trust, not unbounded hierarchy.
 - Cryptographic anchoring proves integrity of records and process history.
 - It does not prove correctness by itself; correctness still depends on independent review and evidence quality.
 
+## Parameter review matrix (canonical)
+
+This is the single canonical parameter table for governance and crypto defaults.
+
+| Parameter | Current value | Change trigger (mandatory human review) | Notes |
+| --- | --- | --- | --- |
+| `q_h` | `30*` | Any simulated-capture test above target bound, any real collusion incident, or quarterly review | Fast trust-jump human revalidation quorum |
+| `r_h` | `3` | Regional concentration drift, geo-capture risk increase, or quarterly review | Minimum regions in fast revalidation set |
+| `o_h` | `3` | Organization concentration drift, affiliation-capture signal, or quarterly review | Minimum organizations in fast revalidation set |
+| `delta_fast` | `0.02 / epoch` | Elevated burst-gaming rate, false-positive suspension rate, or quarterly review | Trust-jump suspension threshold |
+| `w_H` | `1.0` | Any governance sensitivity recalibration review | Human governance weight |
+| `w_M` | `0.2` | Any governance sensitivity recalibration review | Machine governance weight (must keep `w_H >= 5 * w_M`) |
+| `tau_vote` | `0.70` | Participation collapse, exclusion risk, or quarterly review | Human constitutional vote eligibility |
+| `tau_prop` | `0.85` | Proposal spam or proposal starvation signal | Human constitutional proposal eligibility |
+| `nP, kP` | `41, 28` | Chamber capture simulation degradation or repeated tie-failure | Proposal chamber size/threshold |
+| `nR, kR` | `61, 41` | Chamber capture simulation degradation or repeated tie-failure | Ratification chamber size/threshold |
+| `nC, kC` | `101, 61` | Challenge-window abuse pattern or challenge underuse pattern | Challenge chamber size/threshold |
+| `R_min` | `8` | Regional participation shifts or geographic concentration increase | Minimum represented regions per chamber |
+| `c_max` | `0.15` | Concentration increase or governance fairness regression | Maximum single-region chamber share |
+| `EPOCH` | `1 hour` | Throughput bottleneck or audit-lag regression | Anchor interval and governance epoch |
+| `ANCHOR_COMMITTEE (n,t)` | `(15,10)` | Signature latency failures, signer compromise risk, or liveness failures | Constitutional decision certification |
+| `KEY_ROTATION` | `90 days` | Key compromise event or audit finding | Mandatory signing-key rotation interval |
+
+Review protocol:
+1. No parameter change is valid without multi-chamber verified-human ratification.
+2. Every approved parameter change must be versioned, signed, and anchor-committed.
+3. Emergency parameter changes expire automatically in 30 days unless ratified.
+
 ## Design tests (must pass)
 
 1. Can an identity pay to gain trust? If yes, reject design.
@@ -267,5 +295,12 @@ When in doubt:
 - Choose legitimacy over speed.
 - Choose evidence over volume.
 - Choose earned trust over purchased influence.
+
+## Documentation stop rule
+
+To prevent document sprawl:
+1. This constitution is the only canonical source for parameter defaults.
+2. New docs are not created for parameter changes; existing canonical sections are updated in place.
+3. A new standalone doc is allowed only for a new cryptographic primitive, a new constitutional chamber, or a new legal-risk class.
 
 \* subject to review

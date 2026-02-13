@@ -331,6 +331,7 @@ Front-facing documents:
 1. [Trust Constitution](TRUST_CONSTITUTION.md)
 2. [Public Brief](PROJECT_POLARIS_PUBLIC_BRIEF.md)
 3. [Institutional White Paper (Draft)](PROJECT_POLARIS_INSTITUTIONAL_WHITE_PAPER.md)
+4. Canonical parameter defaults and review triggers are maintained only in `TRUST_CONSTITUTION.md` ("Parameter review matrix").
 
 Program and process documents:
 
@@ -341,6 +342,10 @@ Program and process documents:
 Archival note:
 
 External source PDFs are intentionally excluded from this repository and preserved locally for historical reference.
+
+Documentation stop rule:
+1. No new parameter documents.
+2. Parameter changes update the canonical constitution matrix in place.
 
 ## Closing Position
 
