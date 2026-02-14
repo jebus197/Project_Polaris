@@ -36,6 +36,7 @@ class EventKind(str, enum.Enum):
     COMMITMENT_ANCHORED = "commitment_anchored"
     GOVERNANCE_BALLOT = "governance_ballot"
     PHASE_TRANSITION = "phase_transition"
+    QUALITY_ASSESSED = "quality_assessed"
 
 
 @dataclass(frozen=True)

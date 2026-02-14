@@ -3,6 +3,7 @@
 This is the primary interface for programmatic access to Genesis.
 It orchestrates all subsystems:
 - Mission lifecycle (create, submit, assign, review, approve)
+- Quality assessment (derives quality from mission outcomes)
 - Trust management (score computation, updates)
 - Reviewer selection (constrained-random from roster)
 - Epoch management (open, collect, close, anchor)
@@ -42,10 +43,15 @@ from genesis.models.mission import (
     Reviewer,
     RiskTier,
 )
+from genesis.models.quality import (
+    MissionQualityReport,
+    ReviewerQualityAssessment,
+)
 from genesis.models.trust import ActorKind, TrustDelta, TrustRecord
 from genesis.persistence.event_log import EventLog, EventRecord, EventKind
 from genesis.persistence.state_store import StateStore
 from genesis.policy.resolver import PolicyResolver
+from genesis.quality.engine import QualityEngine
 from genesis.review.roster import ActorRoster, ActorStatus, RosterEntry
 from genesis.review.selector import ReviewerSelector, SelectionResult
 from genesis.trust.engine import TrustEngine
@@ -96,6 +102,7 @@ class GenesisService:
     ) -> None:
         self._resolver = resolver
         self._trust_engine = TrustEngine(resolver)
+        self._quality_engine = QualityEngine(resolver)
         self._state_machine = MissionStateMachine(resolver)
         self._reviewer_router = ReviewerRouter(resolver)
         self._evidence_validator = EvidenceValidator()
@@ -110,12 +117,14 @@ class GenesisService:
             self._roster = state_store.load_roster()
             self._trust_records = state_store.load_trust_records()
             self._missions = state_store.load_missions()
+            self._reviewer_assessment_history = state_store.load_reviewer_histories()
             stored_hash, _ = state_store.load_epoch_state()
             self._epoch_service = EpochService(resolver, stored_hash)
         else:
             self._roster = ActorRoster()
             self._trust_records: dict[str, TrustRecord] = {}
             self._missions: dict[str, Mission] = {}
+            self._reviewer_assessment_history: dict[str, list[ReviewerQualityAssessment]] = {}
             self._epoch_service = EpochService(resolver, previous_hash)
 
         self._selector = ReviewerSelector(resolver, self._roster)
@@ -330,7 +339,11 @@ class GenesisService:
             # Route to human gate — cannot skip
             return self._transition_mission(mission_id, MissionState.HUMAN_GATE_PENDING)
 
-        return self._transition_mission(mission_id, MissionState.APPROVED)
+        result = self._transition_mission(mission_id, MissionState.APPROVED)
+        if result.success:
+            qa_result = self._assess_and_update_quality(mission_id)
+            result.data["quality_assessment"] = qa_result.data
+        return result
 
     def human_gate_approve(
         self,
@@ -372,7 +385,11 @@ class GenesisService:
             mission.human_final_approval = False
             return ServiceResult(success=False, errors=[err])
 
-        return self._transition_mission(mission_id, MissionState.APPROVED)
+        result = self._transition_mission(mission_id, MissionState.APPROVED)
+        if result.success:
+            qa_result = self._assess_and_update_quality(mission_id)
+            result.data["quality_assessment"] = qa_result.data
+        return result
 
     def human_gate_reject(
         self,
@@ -407,7 +424,11 @@ class GenesisService:
         if err:
             return ServiceResult(success=False, errors=[err])
 
-        return self._transition_mission(mission_id, MissionState.REJECTED)
+        result = self._transition_mission(mission_id, MissionState.REJECTED)
+        if result.success:
+            qa_result = self._assess_and_update_quality(mission_id)
+            result.data["quality_assessment"] = qa_result.data
+        return result
 
     def get_mission(self, mission_id: str) -> Optional[Mission]:
         """Retrieve a mission by ID."""
@@ -527,6 +548,146 @@ class GenesisService:
     def get_trust(self, actor_id: str) -> Optional[TrustRecord]:
         """Retrieve trust record for an actor."""
         return self._trust_records.get(actor_id.strip())
+
+    # ------------------------------------------------------------------
+    # Quality assessment
+    # ------------------------------------------------------------------
+
+    def assess_quality(self, mission_id: str) -> ServiceResult:
+        """Manually trigger quality assessment for a completed mission.
+
+        Use this for:
+        - Re-assessment after normative adjudication resolves
+        - Debugging and auditing
+        - Missions that were completed before the quality engine was active
+
+        Automatically updates trust for worker and reviewers unless
+        normative escalation is triggered.
+        """
+        return self._assess_and_update_quality(mission_id)
+
+    def _assess_and_update_quality(self, mission_id: str) -> ServiceResult:
+        """Internal: assess quality for a completed mission and update trust.
+
+        Steps (fail-closed ordering):
+        1. Validate mission is in terminal state.
+        2. Run QualityEngine to derive worker + reviewer quality.
+        3. If normative escalation triggered, return without trust update.
+        4. Record quality assessment audit event.
+        5. Update worker trust with derived quality.
+        6. Update each reviewer's trust with their derived quality.
+        7. Update reviewer assessment history sliding window.
+        8. Persist state.
+        """
+        mission = self._missions.get(mission_id)
+        if mission is None:
+            return ServiceResult(
+                success=False,
+                errors=[f"Mission not found: {mission_id}"],
+            )
+
+        # Terminal state check (QualityEngine also validates, but fail early)
+        terminal = {MissionState.APPROVED, MissionState.REJECTED}
+        if mission.state not in terminal:
+            return ServiceResult(
+                success=False,
+                errors=[
+                    f"Quality assessment requires terminal state, "
+                    f"got {mission.state.value}"
+                ],
+            )
+
+        try:
+            report = self._quality_engine.assess_mission(
+                mission=mission,
+                trust_records=self._trust_records,
+                reviewer_histories=self._reviewer_assessment_history,
+            )
+        except ValueError as e:
+            return ServiceResult(success=False, errors=[str(e)])
+
+        # Normative escalation: skip auto trust update
+        if report.normative_escalation_triggered:
+            return ServiceResult(
+                success=True,
+                data={
+                    "mission_id": mission_id,
+                    "normative_escalation": True,
+                    "worker_derived_quality": report.worker_assessment.derived_quality,
+                    "message": (
+                        "Normative escalation triggered — trust updates "
+                        "deferred until human adjudication resolves."
+                    ),
+                },
+            )
+
+        # Record quality assessment audit event (fail-closed)
+        err = self._record_quality_event(mission_id, report)
+        if err:
+            return ServiceResult(success=False, errors=[err])
+
+        # Update worker trust with derived quality
+        worker_result = self.update_trust(
+            actor_id=report.worker_assessment.worker_id,
+            quality=report.worker_assessment.derived_quality,
+            reliability=self._trust_records.get(
+                report.worker_assessment.worker_id, TrustRecord(
+                    actor_id="", actor_kind=ActorKind.HUMAN, score=0.0,
+                ),
+            ).reliability,
+            volume=self._trust_records.get(
+                report.worker_assessment.worker_id, TrustRecord(
+                    actor_id="", actor_kind=ActorKind.HUMAN, score=0.0,
+                ),
+            ).volume,
+            reason=f"quality_assessment:{mission_id}",
+            mission_id=mission_id,
+        )
+
+        # Update each reviewer's trust
+        reviewer_results: list[dict[str, Any]] = []
+        for ra in report.reviewer_assessments:
+            reviewer_record = self._trust_records.get(ra.reviewer_id)
+            if reviewer_record is None:
+                continue  # Reviewer may have been removed
+
+            rev_result = self.update_trust(
+                actor_id=ra.reviewer_id,
+                quality=ra.derived_quality,
+                reliability=reviewer_record.reliability,
+                volume=reviewer_record.volume,
+                reason=f"reviewer_quality_assessment:{mission_id}",
+                mission_id=mission_id,
+            )
+            reviewer_results.append({
+                "reviewer_id": ra.reviewer_id,
+                "derived_quality": ra.derived_quality,
+                "alignment": ra.alignment_score,
+                "calibration": ra.calibration_score,
+                "trust_updated": rev_result.success,
+            })
+
+            # Update reviewer assessment history sliding window
+            _, window_size = self._resolver.calibration_config()
+            history = self._reviewer_assessment_history.get(ra.reviewer_id, [])
+            history.append(ra)
+            # Trim to window size
+            if len(history) > window_size:
+                history = history[-window_size:]
+            self._reviewer_assessment_history[ra.reviewer_id] = history
+
+        self._persist_state()
+
+        return ServiceResult(
+            success=True,
+            data={
+                "mission_id": mission_id,
+                "normative_escalation": False,
+                "worker_derived_quality": report.worker_assessment.derived_quality,
+                "worker_trust_updated": worker_result.success,
+                "reviewer_assessments": reviewer_results,
+            },
+        )
 
     # ------------------------------------------------------------------
     # Epoch operations
@@ -706,6 +867,57 @@ class GenesisService:
 
         return None
 
+    def _record_quality_event(
+        self, mission_id: str, report: MissionQualityReport,
+    ) -> Optional[str]:
+        """Hash and record a quality assessment event. Returns error or None.
+
+        Three-step ordering (same pattern as mission/trust events):
+        1. Pre-check epoch availability.
+        2. Durable append.
+        3. Epoch hash insertion.
+        """
+        # 1. Pre-check: verify epoch is open before writing anything
+        epoch = self._epoch_service.current_epoch
+        if epoch is None or epoch.closed:
+            return (
+                "Audit-trail failure (no epoch open): "
+                "No open epoch — call open_epoch() first."
+            )
+
+        event_data = (
+            f"{mission_id}:quality_assessed:"
+            f"{report.worker_assessment.derived_quality:.4f}:"
+            f"{datetime.now(timezone.utc).isoformat()}"
+        )
+        event_hash = "sha256:" + hashlib.sha256(
+            event_data.encode()
+        ).hexdigest()
+
+        # 2. Durable append — if this fails, epoch stays clean
+        if self._event_log is not None:
+            try:
+                event = EventRecord.create(
+                    event_id=self._next_event_id(),
+                    event_kind=EventKind.QUALITY_ASSESSED,
+                    actor_id=report.worker_assessment.worker_id,
+                    payload={
+                        "mission_id": mission_id,
+                        "worker_quality": report.worker_assessment.derived_quality,
+                        "reviewer_count": len(report.reviewer_assessments),
+                        "normative_escalation": report.normative_escalation_triggered,
+                        "event_hash": event_hash,
+                    },
+                )
+                self._event_log.append(event)
+            except (ValueError, OSError) as e:
+                return f"Event log failure: {e}"
+
+        # 3. Epoch hash insertion — epoch was validated open in step 1
+        self._epoch_service.record_mission_event(event_hash)
+
+        return None
+
     def _persist_state(self) -> None:
         """Persist current state to the state store (if wired)."""
         if self._state_store is None:
@@ -713,6 +925,7 @@ class GenesisService:
         self._state_store.save_roster(self._roster)
         self._state_store.save_trust_records(self._trust_records)
         self._state_store.save_missions(self._missions)
+        self._state_store.save_reviewer_histories(self._reviewer_assessment_history)
         self._state_store.save_epoch_state(
             self._epoch_service.previous_hash,
             len(self._epoch_service.committed_records),

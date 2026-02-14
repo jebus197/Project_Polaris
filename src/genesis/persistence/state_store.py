@@ -3,6 +3,7 @@
 Stores and recovers:
 - Actor roster (all registered actors with trust scores)
 - Mission state (all missions with their current lifecycle state)
+- Reviewer quality assessment histories (sliding windows for calibration)
 - Epoch chain state (previous hash, committed record count)
 
 This is a simple file-based store suitable for single-node deployment.
@@ -29,6 +30,7 @@ from genesis.models.mission import (
     Reviewer,
     RiskTier,
 )
+from genesis.models.quality import ReviewerQualityAssessment
 from genesis.models.trust import ActorKind, TrustRecord
 from genesis.review.roster import ActorRoster, ActorStatus, RosterEntry
 
@@ -217,6 +219,62 @@ class StateStore:
             )
             missions[mid] = mission
         return missions
+
+    # ------------------------------------------------------------------
+    # Reviewer quality assessment history
+    # ------------------------------------------------------------------
+
+    def save_reviewer_histories(
+        self,
+        histories: dict[str, list[ReviewerQualityAssessment]],
+    ) -> None:
+        """Serialize reviewer quality assessment histories to state.
+
+        Each reviewer has a sliding window of past assessments used for
+        calibration scoring. We persist enough to reconstruct on restart.
+        """
+        entries: dict[str, list[dict[str, Any]]] = {}
+        for reviewer_id, assessments in histories.items():
+            entries[reviewer_id] = [
+                {
+                    "reviewer_id": a.reviewer_id,
+                    "mission_id": a.mission_id,
+                    "alignment_score": a.alignment_score,
+                    "calibration_score": a.calibration_score,
+                    "derived_quality": a.derived_quality,
+                    "assessment_utc": a.assessment_utc.strftime(
+                        "%Y-%m-%dT%H:%M:%SZ"
+                    ),
+                }
+                for a in assessments
+            ]
+        self._state["reviewer_histories"] = entries
+        self._save()
+
+    def load_reviewer_histories(
+        self,
+    ) -> dict[str, list[ReviewerQualityAssessment]]:
+        """Deserialize reviewer quality assessment histories from state."""
+        histories: dict[str, list[ReviewerQualityAssessment]] = {}
+        for reviewer_id, entries in self._state.get(
+            "reviewer_histories", {}
+        ).items():
+            assessments = []
+            for data in entries:
+                assessments.append(
+                    ReviewerQualityAssessment(
+                        reviewer_id=data["reviewer_id"],
+                        mission_id=data["mission_id"],
+                        alignment_score=data["alignment_score"],
+                        calibration_score=data["calibration_score"],
+                        derived_quality=data["derived_quality"],
+                        assessment_utc=datetime.strptime(
+                            data["assessment_utc"], "%Y-%m-%dT%H:%M:%SZ"
+                        ).replace(tzinfo=timezone.utc),
+                    )
+                )
+            histories[reviewer_id] = assessments
+        return histories
 
     # ------------------------------------------------------------------
     # Epoch chain state

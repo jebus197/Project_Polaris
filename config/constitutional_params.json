@@ -137,5 +137,37 @@
       "normative",
       "mixed"
     ]
+  },
+  "quality_assessment": {
+    "worker_weights": {
+      "consensus": 0.60,
+      "evidence": 0.20,
+      "complexity": 0.20
+    },
+    "reviewer_weights": {
+      "alignment": 0.70,
+      "calibration": 0.30
+    },
+    "evidence_expectations": {
+      "R0": 1,
+      "R1": 2,
+      "R2": 3,
+      "R3": 3
+    },
+    "complexity_multipliers": {
+      "R0": 0.80,
+      "R1": 0.90,
+      "R2": 1.00,
+      "R3": 1.10
+    },
+    "reviewer_alignment_scores": {
+      "correct_approve": 1.0,
+      "correct_reject": 1.0,
+      "abstain": 0.5,
+      "wrong_approve": 0.2,
+      "wrong_reject": 0.3
+    },
+    "calibration_min_history": 5,
+    "calibration_window_size": 20
   }
 }

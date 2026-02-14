@@ -282,6 +282,37 @@ class PolicyResolver:
         return self._params["key_management"]["KEY_ROTATION_DAYS"]
 
     # ------------------------------------------------------------------
+    # Quality assessment
+    # ------------------------------------------------------------------
+
+    def quality_worker_weights(self) -> tuple[float, float, float]:
+        """Return (w_consensus, w_evidence, w_complexity) for worker quality."""
+        qw = self._params["quality_assessment"]["worker_weights"]
+        return qw["consensus"], qw["evidence"], qw["complexity"]
+
+    def quality_reviewer_weights(self) -> tuple[float, float]:
+        """Return (w_alignment, w_calibration) for reviewer quality."""
+        rw = self._params["quality_assessment"]["reviewer_weights"]
+        return rw["alignment"], rw["calibration"]
+
+    def evidence_expectations(self) -> dict[str, int]:
+        """Return expected evidence count per risk tier."""
+        return dict(self._params["quality_assessment"]["evidence_expectations"])
+
+    def complexity_multipliers(self) -> dict[str, float]:
+        """Return complexity factor per risk tier."""
+        return dict(self._params["quality_assessment"]["complexity_multipliers"])
+
+    def reviewer_alignment_scores(self) -> dict[str, float]:
+        """Return alignment score table for reviewer quality assessment."""
+        return dict(self._params["quality_assessment"]["reviewer_alignment_scores"])
+
+    def calibration_config(self) -> tuple[int, int]:
+        """Return (min_history, window_size) for reviewer calibration."""
+        qa = self._params["quality_assessment"]
+        return qa["calibration_min_history"], qa["calibration_window_size"]
+
+    # ------------------------------------------------------------------
     # Identity signals
     # ------------------------------------------------------------------
 
