@@ -8,6 +8,7 @@ from genesis.models.trust import ActorKind
 from genesis.persistence.event_log import EventLog
 from genesis.persistence.state_store import StateStore
 from genesis.policy.resolver import PolicyResolver
+from genesis.review.roster import ActorStatus
 from genesis.service import GenesisService
 
 
@@ -403,6 +404,119 @@ class TestPersistenceWiring:
         # Reload from file
         log2 = EventLog(storage_path=tmp_path / "events.jsonl")
         assert log2.count >= 1
+
+
+    def test_mutation_after_restart_no_id_collision(self, resolver: PolicyResolver, tmp_path: Path) -> None:
+        """Regression: event-ID counter must resume from persisted log state.
+
+        Previously _event_counter reset to 0 on restart, causing
+        'Duplicate event ID' ValueError on the first post-restart mutation.
+        """
+        event_log = EventLog(storage_path=tmp_path / "events.jsonl")
+        state_store = StateStore(tmp_path / "state.json")
+
+        svc1 = GenesisService(resolver, event_log=event_log, state_store=state_store)
+        svc1.open_epoch("restart-epoch")
+        svc1.create_mission(
+            mission_id="M-PRE", title="Pre-restart mission",
+            mission_class=MissionClass.DOCUMENTATION_UPDATE,
+            domain_type=DomainType.OBJECTIVE,
+        )
+        events_before = event_log.count
+        assert events_before >= 1
+        svc1.close_epoch(beacon_round=1)
+
+        # "Restart" — new service from same storage
+        event_log2 = EventLog(storage_path=tmp_path / "events.jsonl")
+        state_store2 = StateStore(tmp_path / "state.json")
+        svc2 = GenesisService(resolver, event_log=event_log2, state_store=state_store2)
+        svc2.open_epoch("restart-epoch-2")
+
+        # This must NOT raise ValueError: Duplicate event ID
+        result = svc2.create_mission(
+            mission_id="M-POST", title="Post-restart mission",
+            mission_class=MissionClass.DOCUMENTATION_UPDATE,
+            domain_type=DomainType.OBJECTIVE,
+        )
+        assert result.success, f"Post-restart create_mission failed: {result.errors}"
+        assert event_log2.count > events_before
+
+    def test_mutation_after_restart_trust_update(self, resolver: PolicyResolver, tmp_path: Path) -> None:
+        """Regression: trust updates must also work after restart without ID collision."""
+        event_log = EventLog(storage_path=tmp_path / "events.jsonl")
+        state_store = StateStore(tmp_path / "state.json")
+
+        svc1 = GenesisService(resolver, event_log=event_log, state_store=state_store)
+        svc1.open_epoch("trust-restart-epoch")
+        svc1.register_actor(
+            actor_id="worker_r", actor_kind=ActorKind.HUMAN,
+            region="NA", organization="Org1",
+        )
+        svc1.update_trust(
+            actor_id="worker_r", quality=0.9, reliability=0.8,
+            volume=0.4, reason="pre-restart", effort=0.5,
+        )
+        svc1.close_epoch(beacon_round=2)
+
+        # "Restart"
+        event_log2 = EventLog(storage_path=tmp_path / "events.jsonl")
+        state_store2 = StateStore(tmp_path / "state.json")
+        svc2 = GenesisService(resolver, event_log=event_log2, state_store=state_store2)
+        svc2.open_epoch("trust-restart-epoch-2")
+
+        result = svc2.update_trust(
+            actor_id="worker_r", quality=0.7, reliability=0.6,
+            volume=0.3, reason="post-restart", effort=0.4,
+        )
+        assert result.success, f"Post-restart update_trust failed: {result.errors}"
+
+
+class TestDecommissionRollback:
+    """Regression: decommission path must fully rollback on audit failure."""
+
+    def test_roster_status_restored_on_audit_failure(self, resolver: PolicyResolver) -> None:
+        """If trust event recording fails, roster status must roll back.
+
+        Previously roster_entry.status was set to DECOMMISSIONED before the
+        audit write, but the rollback block did not restore it on failure.
+        """
+        # Create service WITHOUT an open epoch so audit recording will fail
+        svc = GenesisService(resolver)
+
+        # Register a machine actor
+        svc.register_actor(
+            actor_id="bot_rollback", actor_kind=ActorKind.MACHINE,
+            region="NA", organization="Org1",
+            model_family="gpt", method_type="reasoning_model",
+        )
+
+        # Verify actor starts as ACTIVE
+        entry = svc.get_actor("bot_rollback")
+        assert entry.status == ActorStatus.ACTIVE
+
+        # Hammer with low-quality updates to reach decommission threshold
+        # Each call will fail closed (no epoch), triggering rollback
+        decomm = resolver.decommission_rules()
+        max_failures = decomm["M_RECERT_FAIL_MAX"]
+
+        for _ in range(max_failures + 5):
+            result = svc.update_trust(
+                actor_id="bot_rollback", quality=0.0, reliability=0.0,
+                volume=0.0, reason="force decommission test",
+            )
+            # Every call should fail because no epoch is open
+            assert not result.success
+            assert "epoch" in result.errors[0].lower() or "audit" in result.errors[0].lower()
+
+        # Roster status must still be ACTIVE — not stuck at DECOMMISSIONED
+        entry = svc.get_actor("bot_rollback")
+        assert entry.status == ActorStatus.ACTIVE, (
+            f"Expected ACTIVE after rollback, got {entry.status}"
+        )
+
+        # Trust record must be unchanged from initial
+        trust = svc.get_trust("bot_rollback")
+        assert trust.score == 0.10  # initial default
 
 
 class TestStatus:

@@ -119,7 +119,8 @@ class GenesisService:
             self._epoch_service = EpochService(resolver, previous_hash)
 
         self._selector = ReviewerSelector(resolver, self._roster)
-        self._event_counter = 0  # monotonic counter for unique event IDs
+        # Initialize counter from persisted log to avoid ID collision on restart
+        self._event_counter = event_log.count if event_log is not None else 0
 
     # ------------------------------------------------------------------
     # Actor management
@@ -446,6 +447,10 @@ class GenesisService:
             mission_id=mission_id,
         )
 
+        # Snapshot roster state for rollback
+        roster_entry = self._roster.get(actor_id)
+        prior_roster_status = roster_entry.status if roster_entry else None
+
         # Machine recertification enforcement
         recert_issues: list[str] = []
         if new_record.actor_kind == ActorKind.MACHINE:
@@ -484,24 +489,23 @@ class GenesisService:
                         last_active_utc=new_record.last_active_utc,
                     )
                     # Update roster status
-                    roster_entry = self._roster.get(actor_id)
                     if roster_entry:
                         roster_entry.status = ActorStatus.DECOMMISSIONED
 
         self._trust_records[actor_id.strip()] = new_record
 
         # Update roster trust score
-        roster_entry = self._roster.get(actor_id)
         if roster_entry:
             roster_entry.trust_score = new_record.score
 
         # Record event (fail-closed)
         err = self._record_trust_event(actor_id, delta)
         if err:
-            # Rollback
+            # Full rollback: trust record, roster score, AND roster status
             self._trust_records[actor_id.strip()] = record
             if roster_entry:
                 roster_entry.trust_score = record.score
+                roster_entry.status = prior_roster_status
             return ServiceResult(success=False, errors=[err])
 
         self._persist_state()
@@ -636,17 +640,20 @@ class GenesisService:
 
         # Append to durable event log if available
         if self._event_log is not None:
-            event = EventRecord.create(
-                event_id=self._next_event_id(),
-                event_kind=EventKind.MISSION_TRANSITION,
-                actor_id=mission.worker_id or "system",
-                payload={
-                    "mission_id": mission.mission_id,
-                    "action": action,
-                    "event_hash": event_hash,
-                },
-            )
-            self._event_log.append(event)
+            try:
+                event = EventRecord.create(
+                    event_id=self._next_event_id(),
+                    event_kind=EventKind.MISSION_TRANSITION,
+                    actor_id=mission.worker_id or "system",
+                    payload={
+                        "mission_id": mission.mission_id,
+                        "action": action,
+                        "event_hash": event_hash,
+                    },
+                )
+                self._event_log.append(event)
+            except (ValueError, OSError) as e:
+                return f"Event log failure: {e}"
 
         return None
 
@@ -663,17 +670,20 @@ class GenesisService:
             return f"Audit-trail failure (no epoch open): {e}"
 
         if self._event_log is not None:
-            event = EventRecord.create(
-                event_id=self._next_event_id(),
-                event_kind=EventKind.TRUST_UPDATED,
-                actor_id=actor_id,
-                payload={
-                    "delta": delta.abs_delta,
-                    "suspended": delta.suspended,
-                    "event_hash": event_hash,
-                },
-            )
-            self._event_log.append(event)
+            try:
+                event = EventRecord.create(
+                    event_id=self._next_event_id(),
+                    event_kind=EventKind.TRUST_UPDATED,
+                    actor_id=actor_id,
+                    payload={
+                        "delta": delta.abs_delta,
+                        "suspended": delta.suspended,
+                        "event_hash": event_hash,
+                    },
+                )
+                self._event_log.append(event)
+            except (ValueError, OSError) as e:
+                return f"Event log failure: {e}"
 
         return None
 
