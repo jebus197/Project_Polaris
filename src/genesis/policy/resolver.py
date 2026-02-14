@@ -46,6 +46,7 @@ class PolicyResolver:
         skill_trust: dict[str, Any] | None = None,
         market_policy: dict[str, Any] | None = None,
         skill_lifecycle: dict[str, Any] | None = None,
+        leave_policy: dict[str, Any] | None = None,
     ) -> None:
         self._params = params
         self._policy = policy
@@ -53,6 +54,7 @@ class PolicyResolver:
         self._skill_trust = skill_trust
         self._market_policy = market_policy
         self._skill_lifecycle = skill_lifecycle
+        self._leave_policy = leave_policy
         self._validate_versions()
 
     def _validate_versions(self) -> None:
@@ -507,6 +509,100 @@ class PolicyResolver:
             }
         return dict(self._market_policy.get("bid_requirements", {}))
 
+    # ------------------------------------------------------------------
+    # Protected leave policy (optional)
+    # ------------------------------------------------------------------
+
+    def has_leave_config(self) -> bool:
+        """Check if leave policy config was loaded."""
+        return self._leave_policy is not None
+
+    def leave_adjudication_config(self) -> dict[str, Any]:
+        """Return leave adjudication parameters.
+
+        Keys: min_quorum, min_approve_to_grant, min_adjudicator_trust,
+              min_domain_trust, max_adjudicators, adjudicator_diversity.
+        """
+        if self._leave_policy is None:
+            return {
+                "min_quorum": 3,
+                "min_approve_to_grant": 2,
+                "min_adjudicator_trust": 0.40,
+                "min_domain_trust": 0.30,
+                "max_adjudicators": 5,
+                "adjudicator_diversity": {
+                    "min_organizations": 2,
+                    "min_regions": 2,
+                },
+            }
+        return dict(self._leave_policy.get("adjudication", {}))
+
+    def leave_category_config(self, category: str) -> dict[str, Any]:
+        """Return config for a specific leave category.
+
+        Keys: required_adjudicator_domains, max_duration_days, renewable.
+        Raises ValueError for unknown categories.
+        """
+        if self._leave_policy is None:
+            from genesis.models.leave import CATEGORY_REQUIRED_DOMAINS
+            if category not in CATEGORY_REQUIRED_DOMAINS:
+                raise ValueError(f"Unknown leave category: {category}")
+            return {
+                "required_adjudicator_domains": CATEGORY_REQUIRED_DOMAINS[category],
+                "max_duration_days": None,
+                "renewable": True,
+            }
+        cats = self._leave_policy.get("leave_categories", {})
+        if category not in cats:
+            raise ValueError(f"Unknown leave category: {category}")
+        return dict(cats[category])
+
+    def leave_anti_gaming_config(self) -> dict[str, Any]:
+        """Return anti-gaming protection parameters.
+
+        Keys: cooldown_days_between_leaves, max_leaves_per_year,
+              adjudicator_cannot_self_approve.
+        """
+        if self._leave_policy is None:
+            return {
+                "cooldown_days_between_leaves": 30,
+                "max_leaves_per_year": 4,
+                "adjudicator_cannot_self_approve": True,
+            }
+        return dict(self._leave_policy.get("anti_gaming", {}))
+
+    def leave_trust_freeze_config(self) -> dict[str, Any]:
+        """Return trust freeze parameters.
+
+        Keys: freeze_trust_score, freeze_domain_scores,
+              freeze_skill_decay, reset_last_active_on_return.
+        """
+        if self._leave_policy is None:
+            return {
+                "freeze_trust_score": True,
+                "freeze_domain_scores": True,
+                "freeze_skill_decay": True,
+                "reset_last_active_on_return": True,
+            }
+        return dict(self._leave_policy.get("trust_freeze", {}))
+
+    def leave_duration_config(self) -> dict[str, Any]:
+        """Return duration limit parameters.
+
+        Keys: default_max_days, category_overrides,
+              extension_requires_new_adjudication.
+        """
+        if self._leave_policy is None:
+            return {
+                "default_max_days": None,
+                "category_overrides": {
+                    "pregnancy": 365,
+                    "child_care": 365,
+                },
+                "extension_requires_new_adjudication": True,
+            }
+        return dict(self._leave_policy.get("duration_limits", {}))
+
     @classmethod
     def from_config_dir(cls, config_dir: Path) -> PolicyResolver:
         """Load from the canonical config directory."""
@@ -537,12 +633,19 @@ class PolicyResolver:
         if lifecycle_path.exists():
             skill_lifecycle = _load_json(lifecycle_path)
 
+        # Leave policy is optional — system works without it
+        leave_path = config_dir / "leave_policy.json"
+        leave_policy = None
+        if leave_path.exists():
+            leave_policy = _load_json(leave_path)
+
         return cls(
             params, policy,
             taxonomy=taxonomy,
             skill_trust=skill_trust,
             market_policy=market_policy,
             skill_lifecycle=skill_lifecycle,
+            leave_policy=leave_policy,
         )
 
 

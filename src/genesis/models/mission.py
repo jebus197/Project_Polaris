@@ -30,6 +30,7 @@ class MissionClass(str, enum.Enum):
     INTERNAL_OPERATIONS_CHANGE = "internal_operations_change"
     REGULATED_ANALYSIS = "regulated_analysis"
     CONSTITUTIONAL_CHANGE = "constitutional_change"
+    LEAVE_ADJUDICATION = "leave_adjudication"
 
 
 class DomainType(str, enum.Enum):

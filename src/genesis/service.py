@@ -54,6 +54,13 @@ from genesis.models.skill import (
     SkillRequirement,
 )
 from genesis.models.domain_trust import DomainTrustScore, TrustStatus
+from genesis.models.leave import (
+    AdjudicationVerdict,
+    LeaveAdjudication,
+    LeaveCategory,
+    LeaveRecord,
+    LeaveState,
+)
 from genesis.models.market import (
     AllocationResult,
     Bid,
@@ -62,6 +69,7 @@ from genesis.models.market import (
     MarketListing,
 )
 from genesis.models.trust import ActorKind, TrustDelta, TrustRecord
+from genesis.leave.engine import LeaveAdjudicationEngine
 from genesis.market.allocator import AllocationEngine
 from genesis.market.listing_state_machine import ListingStateMachine
 from genesis.skills.decay import SkillDecayEngine
@@ -149,6 +157,9 @@ class GenesisService:
         self._endorsement_engine = EndorsementEngine(resolver)
         self._skill_outcome_updater = SkillOutcomeUpdater(resolver)
 
+        # Protected leave engine
+        self._leave_engine = LeaveAdjudicationEngine(resolver)
+
         # Load persisted state or start fresh
         if state_store is not None:
             self._roster = state_store.load_roster()
@@ -157,6 +168,7 @@ class GenesisService:
             self._reviewer_assessment_history = state_store.load_reviewer_histories()
             self._skill_profiles = state_store.load_skill_profiles()
             self._listings, self._bids = state_store.load_listings()
+            self._leave_records = state_store.load_leave_records()
             stored_hash, _ = state_store.load_epoch_state()
             self._epoch_service = EpochService(resolver, stored_hash)
         else:
@@ -167,6 +179,7 @@ class GenesisService:
             self._skill_profiles: dict[str, ActorSkillProfile] = {}
             self._listings: dict[str, MarketListing] = {}
             self._bids: dict[str, list[Bid]] = {}
+            self._leave_records: dict[str, LeaveRecord] = {}
             self._epoch_service = EpochService(resolver, previous_hash)
 
         self._selector = ReviewerSelector(
@@ -176,6 +189,8 @@ class GenesisService:
         )
         # Initialize counter from persisted log to avoid ID collision on restart
         self._event_counter = event_log.count if event_log is not None else 0
+        # Leave ID counter: initialise from persisted records
+        self._leave_counter = len(self._leave_records)
 
         # Persistence health flag: set to True if a StateStore write fails
         # after an audit event has been durably committed. In-memory state
@@ -528,6 +543,9 @@ class GenesisService:
 
         for aid, profile in profiles_to_decay.items():
             if profile is None:
+                continue
+            # Skip actors on protected leave — skill decay is frozen
+            if self.is_actor_on_leave(aid):
                 continue
             is_machine = False
             trust_rec = self._trust_records.get(aid)
@@ -1399,6 +1417,16 @@ class GenesisService:
                 errors=[f"No trust record for actor: {actor_id}"],
             )
 
+        # Trust freeze: actors on protected leave cannot gain or lose trust
+        if self.is_actor_on_leave(actor_id.strip()):
+            return ServiceResult(
+                success=False,
+                errors=[
+                    f"Actor {actor_id.strip()} is on protected leave; "
+                    f"trust is frozen (no gain, no loss)"
+                ],
+            )
+
         new_record, delta = self._trust_engine.apply_update(
             record, quality=quality, reliability=reliability,
             volume=volume, reason=reason, effort=effort,
@@ -1529,6 +1557,9 @@ class GenesisService:
         snapshots: dict[str, tuple[TrustRecord, float | None]] = {}
 
         for actor_id, record in list(self._trust_records.items()):
+            # Skip actors on protected leave — trust is frozen
+            if self.is_actor_on_leave(actor_id):
+                continue
             new_record = self._trust_engine.apply_inactivity_decay(record)
             if new_record is not record:  # identity check — was actually decayed
                 roster_entry = self._roster.get(actor_id)
@@ -1565,6 +1596,758 @@ class GenesisService:
                 "actors": decayed_actors,
             },
         )
+
+    # ------------------------------------------------------------------
+    # Protected leave
+    # ------------------------------------------------------------------
+
+    def request_leave(
+        self,
+        actor_id: str,
+        category: LeaveCategory,
+        reason_summary: str = "",
+    ) -> ServiceResult:
+        """Submit a protected leave request.
+
+        Validates actor exists and is active, checks anti-gaming
+        constraints, creates a PENDING leave record.
+        """
+        actor_id = actor_id.strip()
+        entry = self._roster.get(actor_id)
+        if entry is None:
+            return ServiceResult(
+                success=False, errors=[f"Actor not found: {actor_id}"],
+            )
+        # Protected leave is for human life events only
+        if entry.actor_kind != ActorKind.HUMAN:
+            return ServiceResult(
+                success=False,
+                errors=["Only human actors can request protected leave"],
+            )
+        # DEATH category must use petition_memorialisation() — third-party petitioned
+        if category == LeaveCategory.DEATH:
+            return ServiceResult(
+                success=False,
+                errors=[
+                    "Death memorialisation must be petitioned by a third party "
+                    "using petition_memorialisation(), not self-requested"
+                ],
+            )
+        if not entry.is_available():
+            return ServiceResult(
+                success=False,
+                errors=[f"Actor status is {entry.status.value}; must be active or probation"],
+            )
+
+        # Anti-gaming checks
+        existing_leaves = [
+            r for r in self._leave_records.values()
+            if r.actor_id == actor_id
+        ]
+        violations = self._leave_engine.check_anti_gaming(
+            actor_id, existing_leaves,
+        )
+        if violations:
+            return ServiceResult(success=False, errors=violations)
+
+        # Create PENDING record
+        now = datetime.now(timezone.utc)
+        self._leave_counter += 1
+        leave_id = f"LEAVE-{self._leave_counter:06d}"
+
+        record = LeaveRecord(
+            leave_id=leave_id,
+            actor_id=actor_id,
+            category=category,
+            state=LeaveState.PENDING,
+            reason_summary=reason_summary,
+            requested_utc=now,
+        )
+        self._leave_records[leave_id] = record
+
+        # Three-step event recording
+        err = self._record_leave_event(record, "requested")
+        if err:
+            del self._leave_records[leave_id]
+            self._leave_counter -= 1
+            return ServiceResult(success=False, errors=[err])
+
+        warning = self._safe_persist_post_audit()
+        data: dict[str, Any] = {"leave_id": leave_id, "state": record.state.value}
+        if warning:
+            data["warning"] = warning
+        return ServiceResult(success=True, data=data)
+
+    def adjudicate_leave(
+        self,
+        leave_id: str,
+        adjudicator_id: str,
+        verdict: AdjudicationVerdict,
+        notes: str = "",
+    ) -> ServiceResult:
+        """Submit an adjudication verdict on a leave request.
+
+        Validates adjudicator eligibility (human, domain trust, not self,
+        not duplicate). If quorum is reached, transitions to APPROVED
+        (activating trust freeze) or DENIED.
+        """
+        record = self._leave_records.get(leave_id)
+        if record is None:
+            return ServiceResult(
+                success=False, errors=[f"Leave record not found: {leave_id}"],
+            )
+        if record.state != LeaveState.PENDING:
+            return ServiceResult(
+                success=False,
+                errors=[f"Leave is {record.state.value}; can only adjudicate PENDING"],
+            )
+
+        # For death petitions, check if actor already memorialised by another record
+        if record.category == LeaveCategory.DEATH:
+            actor_entry = self._roster.get(record.actor_id)
+            if actor_entry and actor_entry.status == ActorStatus.MEMORIALISED:
+                return ServiceResult(
+                    success=False,
+                    errors=[f"Actor {record.actor_id} is already memorialised"],
+                )
+
+        adjudicator_id = adjudicator_id.strip()
+
+        # Duplicate vote check
+        for adj in record.adjudications:
+            if adj.adjudicator_id == adjudicator_id:
+                return ServiceResult(
+                    success=False,
+                    errors=[f"Adjudicator {adjudicator_id} has already voted"],
+                )
+
+        # Enforce max_adjudicators cap
+        adj_config = self._resolver.leave_adjudication_config()
+        max_adjudicators = adj_config.get("max_adjudicators")
+        if max_adjudicators is not None and len(record.adjudications) >= max_adjudicators:
+            return ServiceResult(
+                success=False,
+                errors=[
+                    f"Maximum adjudicator cap reached ({max_adjudicators}); "
+                    f"no further votes accepted"
+                ],
+            )
+
+        # Eligibility check via engine
+        adj_entry = self._roster.get(adjudicator_id)
+        if adj_entry is None:
+            return ServiceResult(
+                success=False,
+                errors=[f"Adjudicator not found: {adjudicator_id}"],
+            )
+        adj_trust = self._trust_records.get(adjudicator_id)
+        if adj_trust is None:
+            return ServiceResult(
+                success=False,
+                errors=[f"No trust record for adjudicator: {adjudicator_id}"],
+            )
+
+        eligibility = self._leave_engine.check_adjudicator_eligibility(
+            adj_entry, adj_trust, record.category, record.actor_id,
+        )
+        if not eligibility.eligible:
+            return ServiceResult(success=False, errors=eligibility.errors)
+
+        # Snapshot for rollback
+        old_adjudications = list(record.adjudications)
+        old_state = record.state
+        old_approved_utc = record.approved_utc
+        old_denied_utc = record.denied_utc
+
+        # Add adjudication
+        now = datetime.now(timezone.utc)
+        adjudication = LeaveAdjudication(
+            adjudicator_id=adjudicator_id,
+            verdict=verdict,
+            domain_qualified=eligibility.qualifying_domain,
+            trust_score_at_decision=adj_trust.score,
+            notes=notes,
+            timestamp_utc=now,
+        )
+        record.adjudications.append(adjudication)
+
+        # Record adjudication event
+        err = self._record_leave_event(record, "adjudicated")
+        if err:
+            record.adjudications = old_adjudications
+            return ServiceResult(success=False, errors=[err])
+
+        # Check quorum
+        quorum_result = self._leave_engine.evaluate_quorum(record)
+        activation_data: dict[str, Any] | None = None
+
+        if quorum_result.quorum_reached:
+            if quorum_result.approved:
+                # Diversity check: non-abstain adjudicators must meet
+                # configured org/region diversity thresholds
+                non_abstain_entries: dict[str, RosterEntry] = {}
+                for adj in record.adjudications:
+                    if adj.verdict != AdjudicationVerdict.ABSTAIN:
+                        e = self._roster.get(adj.adjudicator_id)
+                        if e is not None:
+                            non_abstain_entries[adj.adjudicator_id] = e
+                diversity_violations = (
+                    self._leave_engine.check_adjudicator_diversity(
+                        non_abstain_entries,
+                    )
+                )
+                if diversity_violations:
+                    # Quorum count is met but diversity is not —
+                    # leave stays PENDING, more adjudicators needed
+                    warning = self._safe_persist_post_audit()
+                    data_pending: dict[str, Any] = {
+                        "leave_id": leave_id,
+                        "state": record.state.value,
+                        "quorum_reached": False,
+                        "diversity_unmet": diversity_violations,
+                        "approve_count": quorum_result.approve_count,
+                        "deny_count": quorum_result.deny_count,
+                        "abstain_count": quorum_result.abstain_count,
+                    }
+                    if warning:
+                        data_pending["warning"] = warning
+                    return ServiceResult(success=True, data=data_pending)
+
+                # DEATH category → memorialise (seal forever)
+                # All other categories → activate leave (temporary freeze)
+                if record.category == LeaveCategory.DEATH:
+                    activation_data = self._memorialise_account(record, now)
+                    err = self._record_leave_event(record, "memorialised")
+                    if err:
+                        # Rollback memorialisation
+                        self._undo_memorialisation(record, old_state,
+                                                    old_approved_utc, old_adjudications)
+                        return ServiceResult(success=False, errors=[err])
+                else:
+                    activation_data = self._activate_leave(record, now)
+                    err = self._record_leave_event(record, "approved")
+                    if err:
+                        self._undo_leave_activation(record, old_state,
+                                                    old_approved_utc, old_adjudications)
+                        return ServiceResult(success=False, errors=[err])
+            else:
+                # Deny
+                record.state = LeaveState.DENIED
+                record.denied_utc = now
+                err = self._record_leave_event(record, "denied")
+                if err:
+                    record.state = old_state
+                    record.denied_utc = old_denied_utc
+                    record.adjudications = old_adjudications
+                    return ServiceResult(success=False, errors=[err])
+
+        warning = self._safe_persist_post_audit()
+        data: dict[str, Any] = {
+            "leave_id": leave_id,
+            "state": record.state.value,
+            "quorum_reached": quorum_result.quorum_reached,
+            "approve_count": quorum_result.approve_count,
+            "deny_count": quorum_result.deny_count,
+            "abstain_count": quorum_result.abstain_count,
+        }
+        if activation_data:
+            data["trust_frozen"] = True
+            data["trust_score_at_freeze"] = activation_data["trust_score_at_freeze"]
+        if warning:
+            data["warning"] = warning
+        return ServiceResult(success=True, data=data)
+
+    def return_from_leave(self, leave_id: str) -> ServiceResult:
+        """Return an actor from active leave.
+
+        Restores ACTIVE status. Resets last_active_utc to now so
+        decay resumes from the return moment, not from the original
+        last-activity. Trust score is preserved from the freeze.
+        """
+        record = self._leave_records.get(leave_id)
+        if record is None:
+            return ServiceResult(
+                success=False, errors=[f"Leave record not found: {leave_id}"],
+            )
+        if record.state == LeaveState.MEMORIALISED:
+            return ServiceResult(
+                success=False,
+                errors=[
+                    "Cannot return from memorialised leave — "
+                    "account is permanently sealed"
+                ],
+            )
+        if record.state != LeaveState.ACTIVE:
+            return ServiceResult(
+                success=False,
+                errors=[f"Leave is {record.state.value}; can only return from ACTIVE"],
+            )
+
+        now = datetime.now(timezone.utc)
+        actor_id = record.actor_id
+
+        # Snapshot for rollback
+        entry = self._roster.get(actor_id)
+        old_status = entry.status if entry else None
+        trust = self._trust_records.get(actor_id)
+        old_last_active = trust.last_active_utc if trust else None
+        # Snapshot per-domain last_active timestamps for rollback
+        old_domain_last_active: dict[str, Any] = {}
+        if trust:
+            for domain, ds in trust.domain_scores.items():
+                if hasattr(ds, "last_active_utc"):
+                    old_domain_last_active[domain] = ds.last_active_utc
+
+        # Transition
+        record.state = LeaveState.RETURNED
+        record.returned_utc = now
+        if entry:
+            # Restore pre-leave status (prevents PROBATION → ACTIVE escalation)
+            restored_status = ActorStatus.ACTIVE
+            if record.pre_leave_status:
+                try:
+                    restored_status = ActorStatus(record.pre_leave_status)
+                except ValueError:
+                    restored_status = ActorStatus.ACTIVE
+            entry.status = restored_status
+        # Reset last_active to now — decay resumes from return
+        if trust:
+            trust.last_active_utc = now
+            # Also reset domain last_active timestamps
+            for ds in trust.domain_scores.values():
+                if hasattr(ds, "last_active_utc"):
+                    ds.last_active_utc = now
+
+        err = self._record_leave_event(record, "returned")
+        if err:
+            record.state = LeaveState.ACTIVE
+            record.returned_utc = None
+            if entry and old_status is not None:
+                entry.status = old_status
+            if trust:
+                if old_last_active is not None:
+                    trust.last_active_utc = old_last_active
+                # Restore per-domain timestamps
+                for domain, old_ts in old_domain_last_active.items():
+                    ds = trust.domain_scores.get(domain)
+                    if ds and hasattr(ds, "last_active_utc"):
+                        ds.last_active_utc = old_ts
+            return ServiceResult(success=False, errors=[err])
+
+        warning = self._safe_persist_post_audit()
+        data: dict[str, Any] = {
+            "leave_id": leave_id,
+            "actor_id": actor_id,
+            "state": record.state.value,
+        }
+        if warning:
+            data["warning"] = warning
+        return ServiceResult(success=True, data=data)
+
+    def petition_memorialisation(
+        self,
+        actor_id: str,
+        petitioner_id: str,
+        reason_summary: str = "",
+    ) -> ServiceResult:
+        """Petition to memorialise a deceased actor's account.
+
+        Filed by a third party (relative, friend, colleague) — not
+        self-requested. Creates a PENDING leave record with category
+        DEATH. The same quorum adjudication process applies: qualified
+        professionals assess the evidence and vote.
+
+        On approval, the account is permanently sealed:
+        - Status becomes MEMORIALISED (not ON_LEAVE).
+        - Trust frozen forever — no gain, no loss, no decay.
+        - Account can never be reactivated.
+        - The person's verified record stands honestly.
+        """
+        actor_id = actor_id.strip()
+        petitioner_id = petitioner_id.strip()
+
+        # Validate actor exists
+        entry = self._roster.get(actor_id)
+        if entry is None:
+            return ServiceResult(
+                success=False, errors=[f"Actor not found: {actor_id}"],
+            )
+        # Only human accounts can be memorialised
+        if entry.actor_kind != ActorKind.HUMAN:
+            return ServiceResult(
+                success=False,
+                errors=["Only human actors can be memorialised"],
+            )
+        # Cannot memorialise an already-memorialised account
+        if entry.status == ActorStatus.MEMORIALISED:
+            return ServiceResult(
+                success=False,
+                errors=[f"Actor {actor_id} is already memorialised"],
+            )
+        # Block duplicate death petitions — no parallel pending/active death records
+        existing_death_leaves = [
+            r for r in self._leave_records.values()
+            if r.actor_id == actor_id
+            and r.category == LeaveCategory.DEATH
+            and r.state in (LeaveState.PENDING, LeaveState.ACTIVE, LeaveState.MEMORIALISED)
+        ]
+        if existing_death_leaves:
+            return ServiceResult(
+                success=False,
+                errors=[
+                    f"Actor {actor_id} already has an active death "
+                    f"memorialisation record (state: {existing_death_leaves[0].state.value})"
+                ],
+            )
+
+        # Petitioner must be a different registered human
+        pet_entry = self._roster.get(petitioner_id)
+        if pet_entry is None:
+            return ServiceResult(
+                success=False,
+                errors=[f"Petitioner not found: {petitioner_id}"],
+            )
+        if petitioner_id == actor_id:
+            return ServiceResult(
+                success=False,
+                errors=["Cannot petition memorialisation for yourself"],
+            )
+        if pet_entry.actor_kind != ActorKind.HUMAN:
+            return ServiceResult(
+                success=False,
+                errors=["Only human actors can petition memorialisation"],
+            )
+
+        # Create PENDING death leave record
+        now = datetime.now(timezone.utc)
+        self._leave_counter += 1
+        leave_id = f"LEAVE-{self._leave_counter:06d}"
+
+        record = LeaveRecord(
+            leave_id=leave_id,
+            actor_id=actor_id,
+            category=LeaveCategory.DEATH,
+            state=LeaveState.PENDING,
+            reason_summary=reason_summary,
+            petitioner_id=petitioner_id,
+            requested_utc=now,
+        )
+        self._leave_records[leave_id] = record
+
+        err = self._record_leave_event(record, "requested")
+        if err:
+            del self._leave_records[leave_id]
+            self._leave_counter -= 1
+            return ServiceResult(success=False, errors=[err])
+
+        warning = self._safe_persist_post_audit()
+        data: dict[str, Any] = {"leave_id": leave_id, "state": record.state.value}
+        if warning:
+            data["warning"] = warning
+        return ServiceResult(success=True, data=data)
+
+    def _memorialise_account(
+        self, record: LeaveRecord, now: datetime,
+    ) -> dict[str, Any]:
+        """Seal a deceased actor's account. Called when death quorum approves.
+
+        - Snapshots trust (same as _activate_leave).
+        - Sets actor status to MEMORIALISED (not ON_LEAVE).
+        - Sets leave state to MEMORIALISED.
+        - Account can never be reactivated.
+        """
+        actor_id = record.actor_id
+        trust = self._trust_records.get(actor_id)
+        entry = self._roster.get(actor_id)
+
+        # Snapshot pre-memorialisation status
+        if entry:
+            record.pre_leave_status = entry.status.value
+
+        # Snapshot trust state for permanent freeze
+        if trust:
+            record.trust_score_at_freeze = trust.score
+            record.last_active_utc_at_freeze = trust.last_active_utc
+            record.domain_scores_at_freeze = {
+                domain: DomainTrustScore(
+                    domain=ds.domain,
+                    score=ds.score,
+                    quality=ds.quality,
+                    reliability=ds.reliability,
+                    volume=ds.volume,
+                    effort=ds.effort,
+                    mission_count=ds.mission_count,
+                    last_active_utc=ds.last_active_utc,
+                )
+                for domain, ds in trust.domain_scores.items()
+                if isinstance(ds, DomainTrustScore)
+            }
+
+        # Seal the account
+        record.state = LeaveState.MEMORIALISED
+        record.approved_utc = now
+        record.memorialised_utc = now
+        if entry:
+            entry.status = ActorStatus.MEMORIALISED
+
+        return {
+            "trust_score_at_freeze": record.trust_score_at_freeze,
+            "memorialised": True,
+        }
+
+    def check_leave_expiries(self) -> ServiceResult:
+        """Periodic sweep: auto-return actors whose leave has expired.
+
+        Categories with duration limits (e.g., pregnancy: 365 days,
+        child_care: 365 days) get an expires_utc at approval time.
+        When now > expires_utc, the leave auto-transitions to RETURNED.
+        Extension requires a new adjudication (same quorum process).
+        """
+        expired: list[dict[str, Any]] = []
+        errors_found: list[str] = []
+
+        for leave_id, record in list(self._leave_records.items()):
+            if self._leave_engine.check_leave_expiry(record):
+                result = self.return_from_leave(leave_id)
+                if result.success:
+                    expired.append({
+                        "leave_id": leave_id,
+                        "actor_id": record.actor_id,
+                        "category": record.category.value,
+                    })
+                else:
+                    errors_found.extend(result.errors)
+
+        return ServiceResult(
+            success=len(errors_found) == 0,
+            errors=errors_found,
+            data={"expired_count": len(expired), "expired": expired},
+        )
+
+    def get_leave_record(self, leave_id: str) -> Optional[LeaveRecord]:
+        """Look up a leave record."""
+        return self._leave_records.get(leave_id)
+
+    def get_actor_leaves(self, actor_id: str) -> list[LeaveRecord]:
+        """Get all leave records for an actor."""
+        return [
+            r for r in self._leave_records.values()
+            if r.actor_id == actor_id.strip()
+        ]
+
+    def is_actor_on_leave(self, actor_id: str) -> bool:
+        """Check if an actor has an ACTIVE or MEMORIALISED leave record.
+
+        Both states freeze trust: ACTIVE is temporary, MEMORIALISED is
+        permanent (death). Either way the constitutional guarantee is the
+        same — no gain, no loss, decay clock stopped.
+        """
+        return any(
+            r.state in (LeaveState.ACTIVE, LeaveState.MEMORIALISED)
+            for r in self._leave_records.values()
+            if r.actor_id == actor_id.strip()
+        )
+
+    def get_leave_status(self) -> dict[str, Any]:
+        """System-wide leave statistics."""
+        by_state: dict[str, int] = {}
+        by_category: dict[str, int] = {}
+        for r in self._leave_records.values():
+            by_state[r.state.value] = by_state.get(r.state.value, 0) + 1
+            if r.state in (LeaveState.ACTIVE, LeaveState.PENDING, LeaveState.MEMORIALISED):
+                by_category[r.category.value] = by_category.get(r.category.value, 0) + 1
+        return {
+            "total_records": len(self._leave_records),
+            "by_state": by_state,
+            "active_by_category": by_category,
+        }
+
+    # ------------------------------------------------------------------
+    # Protected leave — internal helpers
+    # ------------------------------------------------------------------
+
+    def _activate_leave(
+        self, record: LeaveRecord, now: datetime,
+    ) -> dict[str, Any]:
+        """Activate an approved leave — snapshot trust, set ON_LEAVE.
+
+        Returns activation data for the service result.
+        """
+        actor_id = record.actor_id
+        trust = self._trust_records.get(actor_id)
+        entry = self._roster.get(actor_id)
+
+        # Snapshot pre-leave actor status (to restore on return)
+        if entry:
+            record.pre_leave_status = entry.status.value
+
+        # Snapshot trust state for freeze
+        if trust:
+            record.trust_score_at_freeze = trust.score
+            record.last_active_utc_at_freeze = trust.last_active_utc
+            # Deep-copy domain scores
+            record.domain_scores_at_freeze = {
+                domain: DomainTrustScore(
+                    domain=ds.domain,
+                    score=ds.score,
+                    quality=ds.quality,
+                    reliability=ds.reliability,
+                    volume=ds.volume,
+                    effort=ds.effort,
+                    mission_count=ds.mission_count,
+                    last_active_utc=ds.last_active_utc,
+                )
+                for domain, ds in trust.domain_scores.items()
+                if isinstance(ds, DomainTrustScore)
+            }
+
+        # Set leave state
+        record.state = LeaveState.ACTIVE
+        record.approved_utc = now
+
+        # Compute expiry if category has duration limit
+        record.expires_utc = self._leave_engine.compute_expires_utc(
+            record.category, now,
+        )
+        if record.expires_utc:
+            # Extract granted duration from config
+            duration_config = self._resolver.leave_duration_config()
+            overrides = duration_config.get("category_overrides", {})
+            default_max = duration_config.get("default_max_days")
+            record.granted_duration_days = overrides.get(
+                record.category.value, default_max,
+            )
+
+        # Set roster status to ON_LEAVE
+        if entry:
+            entry.status = ActorStatus.ON_LEAVE
+
+        return {
+            "trust_score_at_freeze": record.trust_score_at_freeze,
+            "expires_utc": (
+                record.expires_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+                if record.expires_utc else None
+            ),
+        }
+
+    def _undo_leave_activation(
+        self,
+        record: LeaveRecord,
+        old_state: LeaveState,
+        old_approved_utc: Optional[datetime],
+        old_adjudications: list[LeaveAdjudication],
+    ) -> None:
+        """Rollback helper for a failed leave activation."""
+        actor_id = record.actor_id
+        record.state = old_state
+        record.approved_utc = old_approved_utc
+        record.adjudications = old_adjudications
+        # Restore pre-leave status
+        pre_status = record.pre_leave_status
+        record.trust_score_at_freeze = None
+        record.last_active_utc_at_freeze = None
+        record.domain_scores_at_freeze = {}
+        record.expires_utc = None
+        record.granted_duration_days = None
+        record.pre_leave_status = None
+        entry = self._roster.get(actor_id)
+        if entry:
+            if pre_status:
+                try:
+                    entry.status = ActorStatus(pre_status)
+                except ValueError:
+                    entry.status = ActorStatus.ACTIVE
+            else:
+                entry.status = ActorStatus.ACTIVE
+
+    def _undo_memorialisation(
+        self,
+        record: LeaveRecord,
+        old_state: LeaveState,
+        old_approved_utc: Optional[datetime],
+        old_adjudications: list[LeaveAdjudication],
+    ) -> None:
+        """Rollback helper for a failed memorialisation."""
+        actor_id = record.actor_id
+        record.state = old_state
+        record.approved_utc = old_approved_utc
+        record.memorialised_utc = None
+        record.adjudications = old_adjudications
+        # Restore pre-memorialisation status
+        pre_status = record.pre_leave_status
+        record.trust_score_at_freeze = None
+        record.last_active_utc_at_freeze = None
+        record.domain_scores_at_freeze = {}
+        record.pre_leave_status = None
+        entry = self._roster.get(actor_id)
+        if entry:
+            if pre_status:
+                try:
+                    entry.status = ActorStatus(pre_status)
+                except ValueError:
+                    entry.status = ActorStatus.ACTIVE
+            else:
+                entry.status = ActorStatus.ACTIVE
+
+    def _record_leave_event(
+        self, record: LeaveRecord, action: str,
+    ) -> Optional[str]:
+        """Record a leave event. Returns error string or None.
+
+        Three-step ordering (same pattern as all other event recording):
+        1. Pre-check epoch availability (fail fast).
+        2. Durable append (if it fails, epoch stays clean).
+        3. Epoch hash insertion (guaranteed to succeed).
+        """
+        # 1. Pre-check: verify epoch is open
+        epoch = self._epoch_service.current_epoch
+        if epoch is None or epoch.closed:
+            return (
+                "Audit-trail failure (no epoch open): "
+                "No open epoch — call open_epoch() first."
+            )
+
+        event_data = (
+            f"{record.leave_id}:{record.actor_id}:{action}:"
+            f"{datetime.now(timezone.utc).isoformat()}"
+        )
+        event_hash = "sha256:" + hashlib.sha256(event_data.encode()).hexdigest()
+
+        # Map action to EventKind
+        action_to_kind = {
+            "requested": EventKind.LEAVE_REQUESTED,
+            "adjudicated": EventKind.LEAVE_ADJUDICATED,
+            "approved": EventKind.LEAVE_APPROVED,
+            "denied": EventKind.LEAVE_DENIED,
+            "returned": EventKind.LEAVE_RETURNED,
+            "permanent": EventKind.LEAVE_PERMANENT,
+            "memorialised": EventKind.LEAVE_MEMORIALISED,
+        }
+        event_kind = action_to_kind.get(action, EventKind.LEAVE_REQUESTED)
+
+        # 2. Durable append
+        if self._event_log is not None:
+            try:
+                event = EventRecord.create(
+                    event_id=self._next_event_id(),
+                    event_kind=event_kind,
+                    actor_id=record.actor_id,
+                    payload={
+                        "leave_id": record.leave_id,
+                        "actor_id": record.actor_id,
+                        "category": record.category.value,
+                        "action": action,
+                        "state": record.state.value,
+                        "event_hash": event_hash,
+                    },
+                )
+                self._event_log.append(event)
+            except (ValueError, OSError) as e:
+                return f"Event log failure: {e}"
+
+        # 3. Epoch hash insertion
+        self._epoch_service.record_mission_event(event_hash)
+        return None
 
     # ------------------------------------------------------------------
     # Quality assessment
@@ -1825,6 +2608,17 @@ class GenesisService:
                     if l.state in (ListingState.OPEN, ListingState.ACCEPTING_BIDS)
                 ),
                 "total_bids": sum(len(b) for b in self._bids.values()),
+            },
+            "leave": {
+                "total_records": len(self._leave_records),
+                "active_leaves": sum(
+                    1 for r in self._leave_records.values()
+                    if r.state == LeaveState.ACTIVE
+                ),
+                "pending_requests": sum(
+                    1 for r in self._leave_records.values()
+                    if r.state == LeaveState.PENDING
+                ),
             },
             "epochs": {
                 "committed": len(self._epoch_service.committed_records),
@@ -2158,6 +2952,7 @@ class GenesisService:
         self._state_store.save_reviewer_histories(self._reviewer_assessment_history)
         self._state_store.save_skill_profiles(self._skill_profiles)
         self._state_store.save_listings(self._listings, self._bids)
+        self._state_store.save_leave_records(self._leave_records)
         self._state_store.save_epoch_state(
             self._epoch_service.previous_hash,
             len(self._epoch_service.committed_records),

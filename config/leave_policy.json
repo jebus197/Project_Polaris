@@ -1,0 +1,83 @@
+{
+  "version": "0.1",
+  "updated_utc": "2026-02-14T12:00:00Z",
+
+  "adjudication": {
+    "min_quorum": 3,
+    "min_approve_to_grant": 2,
+    "min_adjudicator_trust": 0.40,
+    "min_domain_trust": 0.30,
+    "max_adjudicators": 5,
+    "adjudicator_diversity": {
+      "min_organizations": 2,
+      "min_regions": 2
+    }
+  },
+
+  "leave_categories": {
+    "illness": {
+      "required_adjudicator_domains": ["healthcare"],
+      "max_duration_days": null,
+      "renewable": true
+    },
+    "bereavement": {
+      "required_adjudicator_domains": ["social_services", "mental_health"],
+      "max_duration_days": null,
+      "renewable": true
+    },
+    "disability": {
+      "required_adjudicator_domains": ["healthcare", "social_services"],
+      "max_duration_days": null,
+      "renewable": true
+    },
+    "mental_health": {
+      "required_adjudicator_domains": ["mental_health", "healthcare"],
+      "max_duration_days": null,
+      "renewable": true
+    },
+    "caregiver": {
+      "required_adjudicator_domains": ["social_services"],
+      "max_duration_days": null,
+      "renewable": true
+    },
+    "pregnancy": {
+      "required_adjudicator_domains": ["healthcare"],
+      "max_duration_days": 365,
+      "renewable": true
+    },
+    "child_care": {
+      "required_adjudicator_domains": ["social_services"],
+      "max_duration_days": 365,
+      "renewable": true
+    },
+    "death": {
+      "required_adjudicator_domains": ["healthcare", "social_services"],
+      "max_duration_days": null,
+      "renewable": false
+    }
+  },
+
+  "trust_freeze": {
+    "freeze_trust_score": true,
+    "freeze_domain_scores": true,
+    "freeze_skill_decay": true,
+    "reset_last_active_on_return": true
+  },
+
+  "anti_gaming": {
+    "cooldown_days_between_leaves": 30,
+    "max_leaves_per_year": 4,
+    "adjudicator_cannot_self_approve": true,
+    "adjudicator_max_pending_adjudications": 10,
+    "require_different_adjudicators_per_leave": false
+  },
+
+  "duration_limits": {
+    "default_max_days": null,
+    "category_overrides": {
+      "pregnancy": 365,
+      "child_care": 365
+    },
+    "extension_requires_new_adjudication": true
+  }
+}

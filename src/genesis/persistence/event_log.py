@@ -46,6 +46,14 @@ class EventKind(str, enum.Enum):
     SKILL_UPDATED = "skill_updated"
     SKILL_ENDORSED = "skill_endorsed"
     SKILL_DECAYED = "skill_decayed"
+    # Protected leave events
+    LEAVE_REQUESTED = "leave_requested"
+    LEAVE_ADJUDICATED = "leave_adjudicated"
+    LEAVE_APPROVED = "leave_approved"
+    LEAVE_DENIED = "leave_denied"
+    LEAVE_RETURNED = "leave_returned"
+    LEAVE_PERMANENT = "leave_permanent"  # Legacy — kept for log compat
+    LEAVE_MEMORIALISED = "leave_memorialised"
 
 
 @dataclass(frozen=True)

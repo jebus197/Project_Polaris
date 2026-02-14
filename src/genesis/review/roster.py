@@ -30,6 +30,8 @@ class ActorStatus(str, enum.Enum):
     QUARANTINED = "quarantined"
     DECOMMISSIONED = "decommissioned"
     PROBATION = "probation"
+    ON_LEAVE = "on_leave"
+    MEMORIALISED = "memorialised"
 
 
 @dataclass

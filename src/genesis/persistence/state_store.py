@@ -5,6 +5,7 @@ Stores and recovers:
 - Mission state (all missions with their current lifecycle state)
 - Reviewer quality assessment histories (sliding windows for calibration)
 - Actor skill profiles (proficiency per skill)
+- Protected leave records (leave requests, adjudications, trust freeze snapshots)
 - Epoch chain state (previous hash, committed record count)
 
 This is a simple file-based store suitable for single-node deployment.
@@ -45,6 +46,13 @@ from genesis.models.skill import (
     SkillId,
     SkillProficiency,
     SkillRequirement,
+)
+from genesis.models.leave import (
+    AdjudicationVerdict,
+    LeaveAdjudication,
+    LeaveCategory,
+    LeaveRecord,
+    LeaveState,
 )
 from genesis.models.trust import ActorKind, TrustRecord
 from genesis.review.roster import ActorRoster, ActorStatus, RosterEntry
@@ -581,6 +589,213 @@ class StateStore:
                 ))
 
         return listings, bids
+
+    # ------------------------------------------------------------------
+    # Protected leave records
+    # ------------------------------------------------------------------
+
+    def save_leave_records(
+        self,
+        records: dict[str, LeaveRecord],
+    ) -> None:
+        """Serialize protected leave records to state.
+
+        Persists the full leave record including adjudications,
+        trust freeze snapshots, and domain score snapshots.
+        """
+        entries: dict[str, dict[str, Any]] = {}
+        for leave_id, record in records.items():
+            # Serialize adjudications
+            adjudications_data = []
+            for adj in record.adjudications:
+                adjudications_data.append({
+                    "adjudicator_id": adj.adjudicator_id,
+                    "verdict": adj.verdict.value,
+                    "domain_qualified": adj.domain_qualified,
+                    "trust_score_at_decision": adj.trust_score_at_decision,
+                    "notes": adj.notes,
+                    "timestamp_utc": (
+                        adj.timestamp_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+                        if adj.timestamp_utc else None
+                    ),
+                })
+
+            # Serialize domain scores at freeze snapshot
+            domain_scores_data: dict[str, dict[str, Any]] = {}
+            for domain, ds in record.domain_scores_at_freeze.items():
+                if hasattr(ds, "score"):
+                    # DomainTrustScore object
+                    domain_scores_data[domain] = {
+                        "domain": ds.domain,
+                        "score": ds.score,
+                        "quality": ds.quality,
+                        "reliability": ds.reliability,
+                        "volume": ds.volume,
+                        "effort": ds.effort,
+                        "mission_count": ds.mission_count,
+                        "last_active_utc": (
+                            ds.last_active_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+                            if ds.last_active_utc else None
+                        ),
+                    }
+
+            entries[leave_id] = {
+                "leave_id": record.leave_id,
+                "actor_id": record.actor_id,
+                "category": record.category.value,
+                "state": record.state.value,
+                "reason_summary": record.reason_summary,
+                "petitioner_id": record.petitioner_id,
+                "adjudications": adjudications_data,
+                "trust_score_at_freeze": record.trust_score_at_freeze,
+                "last_active_utc_at_freeze": (
+                    record.last_active_utc_at_freeze.strftime("%Y-%m-%dT%H:%M:%SZ")
+                    if record.last_active_utc_at_freeze else None
+                ),
+                "domain_scores_at_freeze": domain_scores_data,
+                "pre_leave_status": record.pre_leave_status,
+                "granted_duration_days": record.granted_duration_days,
+                "expires_utc": (
+                    record.expires_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+                    if record.expires_utc else None
+                ),
+                "requested_utc": (
+                    record.requested_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+                    if record.requested_utc else None
+                ),
+                "approved_utc": (
+                    record.approved_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+                    if record.approved_utc else None
+                ),
+                "denied_utc": (
+                    record.denied_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+                    if record.denied_utc else None
+                ),
+                "returned_utc": (
+                    record.returned_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+                    if record.returned_utc else None
+                ),
+                "memorialised_utc": (
+                    record.memorialised_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+                    if record.memorialised_utc else None
+                ),
+            }
+        self._state["leave_records"] = entries
+        self._save()
+
+    def load_leave_records(self) -> dict[str, LeaveRecord]:
+        """Deserialize protected leave records from state.
+
+        Reconstructs the full leave record including adjudications
+        and trust freeze domain score snapshots.
+        """
+        records: dict[str, LeaveRecord] = {}
+        for leave_id, data in self._state.get("leave_records", {}).items():
+            # Deserialize adjudications
+            adjudications: list[LeaveAdjudication] = []
+            for adj_data in data.get("adjudications", []):
+                adj_ts = None
+                if adj_data.get("timestamp_utc"):
+                    adj_ts = datetime.strptime(
+                        adj_data["timestamp_utc"], "%Y-%m-%dT%H:%M:%SZ"
+                    ).replace(tzinfo=timezone.utc)
+                adjudications.append(LeaveAdjudication(
+                    adjudicator_id=adj_data["adjudicator_id"],
+                    verdict=AdjudicationVerdict(adj_data["verdict"]),
+                    domain_qualified=adj_data["domain_qualified"],
+                    trust_score_at_decision=adj_data["trust_score_at_decision"],
+                    notes=adj_data.get("notes", ""),
+                    timestamp_utc=adj_ts,
+                ))
+
+            # Deserialize domain scores at freeze
+            domain_scores_at_freeze: dict[str, DomainTrustScore] = {}
+            for domain, ds_data in data.get("domain_scores_at_freeze", {}).items():
+                last_active = None
+                if ds_data.get("last_active_utc"):
+                    last_active = datetime.strptime(
+                        ds_data["last_active_utc"], "%Y-%m-%dT%H:%M:%SZ"
+                    ).replace(tzinfo=timezone.utc)
+                domain_scores_at_freeze[domain] = DomainTrustScore(
+                    domain=ds_data.get("domain", domain),
+                    score=ds_data.get("score", 0.0),
+                    quality=ds_data.get("quality", 0.0),
+                    reliability=ds_data.get("reliability", 0.0),
+                    volume=ds_data.get("volume", 0.0),
+                    effort=ds_data.get("effort", 0.0),
+                    mission_count=ds_data.get("mission_count", 0),
+                    last_active_utc=last_active,
+                )
+
+            # Deserialize timestamps
+            last_active_at_freeze = None
+            if data.get("last_active_utc_at_freeze"):
+                last_active_at_freeze = datetime.strptime(
+                    data["last_active_utc_at_freeze"], "%Y-%m-%dT%H:%M:%SZ"
+                ).replace(tzinfo=timezone.utc)
+
+            expires_utc = None
+            if data.get("expires_utc"):
+                expires_utc = datetime.strptime(
+                    data["expires_utc"], "%Y-%m-%dT%H:%M:%SZ"
+                ).replace(tzinfo=timezone.utc)
+
+            requested_utc = None
+            if data.get("requested_utc"):
+                requested_utc = datetime.strptime(
+                    data["requested_utc"], "%Y-%m-%dT%H:%M:%SZ"
+                ).replace(tzinfo=timezone.utc)
+
+            approved_utc = None
+            if data.get("approved_utc"):
+                approved_utc = datetime.strptime(
+                    data["approved_utc"], "%Y-%m-%dT%H:%M:%SZ"
+                ).replace(tzinfo=timezone.utc)
+
+            denied_utc = None
+            if data.get("denied_utc"):
+                denied_utc = datetime.strptime(
+                    data["denied_utc"], "%Y-%m-%dT%H:%M:%SZ"
+                ).replace(tzinfo=timezone.utc)
+
+            returned_utc = None
+            if data.get("returned_utc"):
+                returned_utc = datetime.strptime(
+                    data["returned_utc"], "%Y-%m-%dT%H:%M:%SZ"
+                ).replace(tzinfo=timezone.utc)
+
+            memorialised_utc = None
+            if data.get("memorialised_utc"):
+                memorialised_utc = datetime.strptime(
+                    data["memorialised_utc"], "%Y-%m-%dT%H:%M:%SZ"
+                ).replace(tzinfo=timezone.utc)
+
+            # Legacy compat: map "permanent" → "memorialised"
+            raw_state = data["state"]
+            if raw_state == "permanent":
+                raw_state = "memorialised"
+
+            records[leave_id] = LeaveRecord(
+                leave_id=data["leave_id"],
+                actor_id=data["actor_id"],
+                category=LeaveCategory(data["category"]),
+                state=LeaveState(raw_state),
+                reason_summary=data.get("reason_summary", ""),
+                petitioner_id=data.get("petitioner_id"),
+                adjudications=adjudications,
+                trust_score_at_freeze=data.get("trust_score_at_freeze"),
+                last_active_utc_at_freeze=last_active_at_freeze,
+                domain_scores_at_freeze=domain_scores_at_freeze,
+                pre_leave_status=data.get("pre_leave_status"),
+                granted_duration_days=data.get("granted_duration_days"),
+                expires_utc=expires_utc,
+                requested_utc=requested_utc,
+                approved_utc=approved_utc,
+                denied_utc=denied_utc,
+                returned_utc=returned_utc,
+                memorialised_utc=memorialised_utc,
+            )
+        return records
 
     # ------------------------------------------------------------------
     # Epoch chain state
