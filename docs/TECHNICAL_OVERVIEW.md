@@ -472,6 +472,7 @@ src/genesis/
 ├── governance/      Genesis phase controller (G0→G1→G2→G3 progression)
 ├── crypto/          Merkle trees, commitment builder, blockchain anchoring, epoch service
 ├── review/          Actor roster, constrained-random reviewer selector
+├── persistence/     Event log (append-only JSONL) and state store (JSON)
 ├── service.py       Unified service facade (orchestrates all subsystems)
 └── cli.py           Command-line interface
 ```
@@ -483,7 +484,7 @@ Key design principles:
 3. **Auditable transitions**: every state change in the mission lifecycle is an explicit, logged event.
 4. **Self-review impossible**: the reviewer router structurally prevents any actor from reviewing their own work.
 
-All constitutional invariants are tested automatically. The test suite (196 tests) covers every critical rule described in this document.
+All constitutional invariants are tested automatically. The test suite (212 tests) covers every critical rule described in this document.
 
 ```bash
 python3 -m pytest tests/ -v
