@@ -111,11 +111,17 @@ The technique has been in use since the early days of Bitcoin, through services 
 
 The first document anchored in Genesis is its own constitution. This serves as both a governance act and a concrete demonstration of how anchoring works.
 
-| Document | SHA-256 Hash | Chain | Block | Transaction |
-|---|---|---|---|---|
-| `TRUST_CONSTITUTION.md` | `33f2b003...d324a06` | Ethereum Sepolia | 10255231 | [View on Etherscan](https://sepolia.etherscan.io/tx/031617e394e0aee1875102fb5ba39ad5ad18ea775e1eeb44fd452ecd9d8a3bdb) |
+| Field | Value |
+|---|---|
+| Document | `TRUST_CONSTITUTION.md` |
+| SHA-256 Hash | `33f2b00386aef7e166ce0e23f082a31ae484294d9ff087ddb45c702ddd324a06` |
+| Chain | Ethereum Sepolia (Chain ID 11155111) |
+| Block | 10255231 |
+| Sender | [`0xC3676587a06b33A07a9101eB9F30Af9Fb988F7CE`](https://sepolia.etherscan.io/address/0xC3676587a06b33A07a9101eB9F30Af9Fb988F7CE) |
+| Transaction | [`031617e3...`](https://sepolia.etherscan.io/tx/031617e394e0aee1875102fb5ba39ad5ad18ea775e1eeb44fd452ecd9d8a3bdb) |
+| Anchored | 2026-02-13T23:47:25Z |
 
-Anchored: 2026-02-13T23:47:25Z
+Every field above is publicly verifiable. The sender address links to the wallet's full transaction history on Etherscan. The transaction link shows the exact data that was recorded on-chain.
 
 ### How to Verify It Yourself
 
