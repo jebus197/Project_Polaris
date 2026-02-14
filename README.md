@@ -37,8 +37,8 @@ Genesis wraps AI capability in a governance framework that provides:
 1. **Mission-first coordination** — work is organised around defined goals with clear scope, risk levels, and success criteria, not around engagement metrics or throughput.
 2. **Independent verification** — no one gets to mark their own homework. Critical work is checked by independent reviewers who are deliberately chosen to be diverse in method and perspective.
 3. **Constitutional governance** — the rules of the system are written down, publicly available, and enforced by code. Changing them requires broad agreement from verified humans across multiple independent groups.
-4. **Tamper-evident records** — every significant action produces a permanent record that cannot be altered after the fact. The process history is auditable by anyone.
-5. **Earned trust, not purchased influence** — reputation in the system comes only from doing good work over time. It cannot be bought, inherited, or transferred.
+4. **Cryptographically secured records** — every significant action produces a tamper-evident record, cryptographically hashed and immutable. The full process history is auditable by anyone and anchored to a public blockchain.
+5. **Earned trust, not purchased influence** — reputation in the system is built solely through cryptographic proof-of-work (evidence that real contribution occurred) and proof-of-trust (independent verification of quality over time).
 
 ## The Foundational Rule
 
@@ -47,7 +47,7 @@ This rule is constitutional and non-negotiable:
 > **Trust cannot be bought, sold, exchanged, delegated, rented, inherited, or gifted.**
 > **Trust can only be earned through verified behaviour and verified outcomes over time.**
 
-This exists because if trust becomes tradeable, governance becomes a marketplace for influence. Genesis is designed so that the only path to authority is sustained, verified contribution.
+If trust becomes tradeable, governance becomes a marketplace for influence. Genesis enforces this rule structurally — through cryptographic proof requirements, quality gates, and bounded trust economics — so that the only path to authority is sustained, independently verified contribution.
 
 ## How It Works
 
@@ -55,13 +55,13 @@ A typical Genesis mission follows this path:
 
 1. A human defines the goal, scope, risk level, and what success looks like.
 2. The work is broken into tasks with clear dependencies.
-3. Workers (human or AI) complete tasks and attach evidence of their work.
-4. Independent reviewers check quality and compliance — they are deliberately selected from different backgrounds, models, and methods to avoid groupthink.
+3. Workers (human or AI) complete tasks and attach cryptographically signed evidence of their work.
+4. Independent reviewers check quality and compliance — they are deliberately selected from different AI model families and verification methods to avoid correlated errors.
 5. Approved outputs are assembled into the final result.
 6. For high-risk work, a human must give final sign-off before the mission closes.
-7. Every significant step is recorded in a tamper-evident audit trail.
+7. Every significant step is hashed, signed, and recorded in an immutable audit trail.
 
-The principle is simple: **no single actor should be able to produce, approve, and close their own critical work.**
+The principle is simple: **no single actor should be able to produce, approve, and close their own critical work.** Every claim of contribution is backed by cryptographic proof-of-work. Every claim of quality is backed by independent proof-of-trust.
 
 ## Humans and Machines Have Different Roles
 
@@ -77,10 +77,11 @@ The reason is straightforward: the system that governs AI must not be governable
 Genesis does not allow unlimited trust accumulation. The trust economy has hard rules:
 
 - Everyone starts with the same baseline trust.
-- Trust grows only through verified quality contributions — volume alone is not enough.
+- Trust grows only through cryptographically verified quality contributions — volume alone is not enough. Every trust increase requires proof-of-work evidence and independent proof-of-trust validation.
 - There are hard caps on how much trust any single participant can hold, and how fast trust can grow.
 - Trust decays over time if you stop contributing (gradually for humans, more quickly for machines).
 - Large trust jumps are automatically flagged and require review by multiple independent humans before they take effect.
+- Trust changes are recorded in Merkle trees and committed to the blockchain — creating an immutable, auditable history of how every participant's reputation was earned.
 - High trust grants more responsibility, not more power. It does not give anyone command authority over others.
 
 The design objective: **make gaming the system expensive, make concentration difficult, and keep legitimacy tied to contribution quality.**
@@ -219,6 +220,8 @@ Project Genesis is ambitious by design.
 
 Its claim is not that AI will magically govern itself. Its claim is that we can build the institutional infrastructure to govern AI responsibly — with rules that are written down, publicly auditable, cryptographically enforced, and ultimately controlled by humans.
 
-If that holds in practice, Genesis is not just another tool. It is a new foundation for trustworthy work in the AI era.
+Every governance commitment is backed by cryptographic proof. Every proof is anchored to a public blockchain. Every anchor is independently verifiable by anyone with a computer and an internet connection.
+
+If that holds in practice, Genesis is not just another tool. It is a new trust substrate for coordinated work in the AI era.
 
 \* subject to review
