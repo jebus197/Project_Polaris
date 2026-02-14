@@ -519,6 +519,77 @@ class TestDecommissionRollback:
         assert trust.score == 0.10  # initial default
 
 
+class TestNoPhantomEpochEvents:
+    """Regression: failed durable append must not leave phantom hashes in epoch."""
+
+    def _make_failing_log(self) -> EventLog:
+        """Create an EventLog whose append always raises OSError."""
+        log = EventLog()  # in-memory only
+
+        def _boom(event):
+            raise OSError("simulated disk failure")
+
+        log.append = _boom  # type: ignore[assignment]
+        return log
+
+    def test_mission_append_failure_no_phantom_hash(self, resolver: PolicyResolver) -> None:
+        """If durable append fails, epoch must contain zero mission hashes.
+
+        Previously epoch hash was inserted first, so a subsequent append failure
+        left a phantom hash in the epoch collector while the caller rolled back
+        the mission.
+        """
+        failing_log = self._make_failing_log()
+        svc = GenesisService(resolver, event_log=failing_log)
+        svc.open_epoch("phantom-test")
+
+        result = svc.create_mission(
+            mission_id="M-PHANTOM", title="Should not commit",
+            mission_class=MissionClass.DOCUMENTATION_UPDATE,
+            domain_type=DomainType.OBJECTIVE,
+        )
+        assert not result.success
+        assert "Event log failure" in result.errors[0]
+
+        # Mission must not exist (caller rollback)
+        assert svc.get_mission("M-PHANTOM") is None
+
+        # Epoch must have ZERO mission hashes — no phantom
+        counts = svc._epoch_service.epoch_event_counts()
+        assert counts.get("mission", 0) == 0, (
+            f"Phantom epoch hash: expected 0 mission events, got {counts.get('mission', 0)}"
+        )
+
+    def test_trust_append_failure_no_phantom_hash(self, resolver: PolicyResolver) -> None:
+        """If durable append fails, epoch must contain zero trust hashes."""
+        failing_log = self._make_failing_log()
+        svc = GenesisService(resolver, event_log=failing_log)
+        svc.open_epoch("phantom-trust-test")
+
+        # Register must succeed (register_actor doesn't go through _record_trust_event)
+        svc.register_actor(
+            actor_id="worker_phantom", actor_kind=ActorKind.HUMAN,
+            region="NA", organization="Org1",
+        )
+
+        result = svc.update_trust(
+            actor_id="worker_phantom", quality=0.8, reliability=0.7,
+            volume=0.3, reason="phantom test", effort=0.2,
+        )
+        assert not result.success
+        assert "Event log failure" in result.errors[0]
+
+        # Trust score must be unchanged (rollback)
+        trust = svc.get_trust("worker_phantom")
+        assert trust.score == 0.10  # initial
+
+        # Epoch must have ZERO trust hashes — no phantom
+        counts = svc._epoch_service.epoch_event_counts()
+        assert counts.get("trust", 0) == 0, (
+            f"Phantom epoch hash: expected 0 trust events, got {counts.get('trust', 0)}"
+        )
+
+
 class TestStatus:
     def test_status_structure(self, service: GenesisService) -> None:
         status = service.status()
