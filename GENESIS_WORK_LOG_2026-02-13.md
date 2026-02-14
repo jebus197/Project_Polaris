@@ -134,3 +134,49 @@ Resolved items:
 Validation results recorded:
 1. `python3 tools/check_invariants.py` passed.
 2. `python3 tools/verify_examples.py` passed.
+
+## 12) Project renamed from Polaris to Genesis (same date)
+
+1. All file contents updated: ~100+ references replaced across 15 files.
+2. Six files renamed (Polaris → Genesis).
+3. Project directory renamed: `Project_Polaris` → `Project_Genesis`.
+4. Zero remaining Polaris references confirmed via case-insensitive search.
+
+## 13) Runtime software foundation built (same date)
+
+Complete runtime foundation created with constitutional-parameter-driven design:
+
+1. Data models: `src/genesis/models/` — mission, trust, commitment, governance.
+2. Policy resolver: `src/genesis/policy/resolver.py` — loads constitutional_params.json and runtime_policy.json.
+3. Mission engine: `src/genesis/engine/` — state machine, evidence validation, reviewer routing.
+4. Trust engine: `src/genesis/trust/engine.py` — quality-gated scoring, decay, quarantine, fast-elevation suspension.
+5. Governance controller: `src/genesis/governance/genesis_controller.py` — one-way G0→G1→G2→G3 phase management.
+6. Cryptographic layer: `src/genesis/crypto/` — Merkle tree, commitment builder, blockchain anchoring.
+7. Test suite: 80 tests across 7 test files, all passing.
+
+## 14) First blockchain anchoring event — first trust-minting event (same date)
+
+This entry records the most significant event of the founding session.
+
+The Genesis constitution (`TRUST_CONSTITUTION.md`) was anchored on the Ethereum Sepolia blockchain, creating permanent, tamper-evident, independently verifiable proof that the founding governance document exists in a specific, immutable form.
+
+Under the constitution's own rules, this qualifies as **the first trust-minting event** in Project Genesis history:
+
+- **Proof-of-work:** The constitution was drafted, reviewed, corrected across multiple rounds, hardened against identified gaps, and committed to a public repository.
+- **Proof-of-trust:** The anchoring event binds the project to its own governance rules in a way that cannot be retroactively altered by any party, including the project owner. Independent verification requires no trust in Genesis infrastructure — only a SHA-256 hash computation and a public blockchain lookup.
+
+This is the Genesis equivalent of a founding signature on a physical constitution, except the signature is cryptographic, the witness is a public blockchain, and verification requires only mathematics.
+
+Anchoring record:
+
+| Field | Value |
+|---|---|
+| Document | `TRUST_CONSTITUTION.md` |
+| SHA-256 | `33f2b00386aef7e166ce0e23f082a31ae484294d9ff087ddb45c702ddd324a06` |
+| Chain | Ethereum Sepolia (Chain ID 11155111) |
+| Block | 10255231 |
+| Transaction | `031617e394e0aee1875102fb5ba39ad5ad18ea775e1eeb44fd452ecd9d8a3bdb` |
+| Anchored | 2026-02-13T23:47:25Z |
+
+Verification: [`docs/ANCHORS.md`](docs/ANCHORS.md)
+Formal event record: [`docs/GENESIS_EVENTS.md`](docs/GENESIS_EVENTS.md)

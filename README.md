@@ -382,6 +382,8 @@ Program and process documents:
 3. [Work Log](GENESIS_WORK_LOG_2026-02-13.md)
 4. [Threat Model and Invariants](THREAT_MODEL_AND_INVARIANTS.md)
 5. [Contribution Governance](CONTRIBUTING.md)
+6. [Blockchain Anchor Log](docs/ANCHORS.md)
+7. [Trust Event Ledger](docs/GENESIS_EVENTS.md)
 
 Executable governance artifacts:
 
