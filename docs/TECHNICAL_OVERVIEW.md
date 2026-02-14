@@ -490,6 +490,13 @@ All constitutional invariants are tested automatically. The test suite (212 test
 python3 -m pytest tests/ -v
 ```
 
+### Deployment
+
+The project includes containerised deployment and continuous integration:
+
+- **Dockerfile** — Python 3.13-slim based image that installs the project, runs the full test suite during build as verification, and defaults to running invariant checks.
+- **GitHub Actions CI** — matrix testing on Python 3.11, 3.12, and 3.13. Each run executes: invariant checks (`check_invariants.py`), example verification (`verify_examples.py`), the full pytest suite, and a CLI smoke test. Docker image build runs on main-branch pushes after tests pass.
+
 ---
 
 *This document describes the technical architecture as of the founding session (2026-02-13). It will evolve as the system develops, but changes to constitutional parameters require governance approval as described above.*
