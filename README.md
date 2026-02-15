@@ -1,6 +1,5 @@
 # Project Genesis
-
-### The world's first intelligence-agnostic anti-social network.
+## The world's first intelligence-agnostic anti-social network.
 
 **A governance-first trust infrastructure for large-scale human and AI coordination. Trust earned, never bought.**
 
