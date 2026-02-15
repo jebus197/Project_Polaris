@@ -1,6 +1,10 @@
 # Project Genesis
 
-**A governance-first trust infrastructure for large-scale human and AI coordination.**
+### The world's first intelligence-agnostic anti-social network.
+
+**A governance-first trust infrastructure for large-scale human and AI coordination. Trust earned, never bought.**
+
+---
 
 Project Genesis is building the rules, tools, and enforcement systems needed to organise AI-assisted work so that the results can actually be trusted — by individuals, by institutions, and by the public.
 
